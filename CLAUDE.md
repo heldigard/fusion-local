@@ -1,7 +1,7 @@
 # fusion-cli
 
 Multi-model deliberation (5-field consensus/contradictions/coverage gaps/unique insights/
-blind spots). Public repo: https://github.com/heldigard/fusion
+blind spots). Public repo: https://github.com/heldigard/fusion-local
 
 **Cross-CLI**: works identically from Claude Code, Codex, Antigravity, OpenCode (console
 script on `~/.local/bin`).

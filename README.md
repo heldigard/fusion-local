@@ -4,7 +4,7 @@ Multi-model **deliberation** for the big-model signal-distillation layer. Produc
 grounded 5-field structured analysis — **consensus / contradictions / coverage gaps /
 unique insights / blind spots** — at a fraction of the cost of a single frontier call.
 
-Public repo: https://github.com/heldigard/fusion
+Public repo: https://github.com/heldigard/fusion-local
 
 Graduated from `~/.claude/scripts/fusion-local.py` + `~/.claude/scripts/fusion.py`
 (2026-07-06), following the `codeq` / `smart-trim` / `prompt-improve` / `cheap-llm`
