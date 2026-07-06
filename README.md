@@ -6,9 +6,8 @@ unique insights / blind spots** — at a fraction of the cost of a single fronti
 
 Public repo: https://github.com/heldigard/fusion-local
 
-Graduated from `~/.claude/scripts/fusion-local.py` + `~/.claude/scripts/fusion.py`
-(2026-07-06), following the `codeq` / `smart-trim` / `prompt-improve` / `cheap-llm`
-pattern. **Cross-CLI**: works identically from Claude Code, Codex, Antigravity, OpenCode.
+Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
+`codeq` / `smart-trim` / `prompt-improve` / `cheap-llm` pattern. **Cross-CLI**: works identically from Claude Code, Codex, Antigravity, OpenCode.
 
 ## What it is
 

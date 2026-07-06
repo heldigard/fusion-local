@@ -130,6 +130,15 @@ def _print_readable(envelope: dict[str, Any]) -> None:
     )
     if envelope.get("error"):
         print(f"[warn] {envelope['error']}")
+    evidence = envelope.get("panel_evidence") or []
+    if evidence:
+        print("\n## Panel Evidence")
+        for item in evidence:
+            source = item.get("source") or "unknown"
+            lane = item.get("lane") or "?"
+            suffix = "..." if item.get("truncated") else ""
+            print(f"\n### {source} ({lane})")
+            print(f"{item.get('output', '')}{suffix}")
 
 
 def main() -> int:

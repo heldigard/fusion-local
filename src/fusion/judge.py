@@ -95,13 +95,15 @@ def run_judge(
 
     parsed = _parse_judge_json(res)
     if not isinstance(parsed, dict):
+        raw_text = str(res.get("text", "") or "").strip()
         return empty_fields(
-            consensus=str(res.get("text", "") or ""),
+            consensus=raw_text or "Judge failed; use panel_evidence for raw model signal.",
             judge_model=res.get("model"),
             judge_valid=False,
             cost=res.get("cost", 0),
             latency=res.get("latency", 0),
             error=(res.get("error") or "judge output not valid JSON"),
+            panel_evidence=_panel_evidence(panel_results),
         )
 
     out = empty_fields()
@@ -124,3 +126,23 @@ def _parse_judge_json(res: dict[str, Any]) -> dict[str, Any] | None:
         return json.loads(res["text"])
     except (json.JSONDecodeError, TypeError):
         return None
+
+
+def _panel_evidence(panel_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Preserve successful panel signal when judge synthesis fails."""
+    evidence: list[dict[str, Any]] = []
+    for result in panel_results:
+        output = str(result.get("output") or "")
+        if not output:
+            continue
+        excerpt = output[:6000]
+        evidence.append(
+            {
+                "source": result.get("source"),
+                "lane": result.get("lane"),
+                "output": excerpt,
+                "output_chars": len(output),
+                "truncated": len(excerpt) < len(output),
+            }
+        )
+    return evidence

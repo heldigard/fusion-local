@@ -39,11 +39,11 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 def test_panel_payg_uses_lane2_only() -> None:
     calls: list[str] = []
 
-    def fake_http(spec, task, timeout):
+    def fake_http(spec, _task, _timeout):
         calls.append(f"http:{spec[0]}")
         return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
 
-    def fake_cworker(mode, task, timeout):
+    def fake_cworker(mode, _task, _timeout):
         calls.append(f"cw:{mode}")
         return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
 
@@ -61,7 +61,7 @@ def test_panel_payg_uses_lane2_only() -> None:
 
 
 def test_panel_subs_falls_back_to_payg() -> None:
-    def fake_cworker(mode, task, timeout):
+    def fake_cworker(mode, _task, _timeout):
         ok = mode == "codex-spark"
         return {
             "source": mode,
@@ -73,7 +73,7 @@ def test_panel_subs_falls_back_to_payg() -> None:
 
     http_called: list[str] = []
 
-    def fake_http(spec, task, timeout):
+    def fake_http(spec, _task, _timeout):
         http_called.append(spec[0])
         return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
 
@@ -121,6 +121,8 @@ def _fake_cheap_complete(envelope: dict, *, json_valid: bool = True, text: str |
         "attempts": [],
         "error": None if json_valid else "invalid",
     }
+    # Signature mirrors cheap_complete(system, prompt, **kw); caller passes kwargs by name,
+    # so params cannot be renamed to _* even though the mock ignores them.
     return lambda system, prompt, **kw: payload
 
 
@@ -146,6 +148,24 @@ def test_judge_graceful_on_invalid_json() -> None:
         jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
     check("invalid → judge_valid False", jd["judge_valid"] is False)
     check("raw parked in consensus", jd["consensus"] == "raw prose")
+    check("invalid preserves panel evidence", jd["panel_evidence"][0]["output"] == "y")
+
+
+def test_judge_preserves_panel_when_all_tiers_fail() -> None:
+    with patch("cheap_llm.cheap_complete", _fake_cheap_complete({}, json_valid=False, text="")):
+        jd = judge_mod.run_judge(
+            "task",
+            [{"source": "x", "lane": "payg", "success": True, "output": "panel answer"}],
+        )
+    check("empty judge → useful consensus", "panel_evidence" in jd["consensus"])
+    check("empty judge → evidence output", jd["panel_evidence"][0]["output"] == "panel answer")
+
+
+def test_payg_deepseek_model_id_is_current_shape() -> None:
+    deepseek = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("deepseek")]
+    check("deepseek payg model present", len(deepseek) == 1, str(deepseek))
+    check("deepseek reasoner stale id removed", deepseek[0][2] != "deepseek/deepseek-reasoner")
+    check("deepseek model is openrouter id", deepseek[0][2].startswith("deepseek/"))
 
 
 def test_judge_coerces_string_to_list() -> None:
@@ -175,7 +195,12 @@ def test_fuse_integrates() -> None:
         patch.object(
             panel_mod,
             "_cworker_worker",
-            lambda m, t, to: {"source": m, "lane": "subscription", "success": True, "output": "o"},
+            lambda m, _t, _to: {
+                "source": m,
+                "lane": "subscription",
+                "success": True,
+                "output": "o",
+            },
         ),
         patch(
             "cheap_llm.cheap_complete",
@@ -210,7 +235,12 @@ def test_cli_main_json() -> None:
         patch.object(
             panel_mod,
             "_cworker_worker",
-            lambda m, t, to: {"source": m, "lane": "subscription", "success": True, "output": "o"},
+            lambda m, _t, _to: {
+                "source": m,
+                "lane": "subscription",
+                "success": True,
+                "output": "o",
+            },
         ),
         patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)),
         patch.object(sys, "argv", ["fusion-local", "Q?", "--json", "--min-workers", "1"]),
@@ -235,7 +265,12 @@ def test_cli_main_readable() -> None:
         patch.object(
             panel_mod,
             "_cworker_worker",
-            lambda m, t, to: {"source": m, "lane": "subscription", "success": True, "output": "o"},
+            lambda m, _t, _to: {
+                "source": m,
+                "lane": "subscription",
+                "success": True,
+                "output": "o",
+            },
         ),
         patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)),
         patch.object(sys, "argv", ["fusion-local", "Q?", "--min-workers", "1"]),
@@ -266,6 +301,8 @@ TESTS = [
     ("cworker_router_unavailable", test_cworker_router_unavailable),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
+    ("judge_preserves_panel_when_all_tiers_fail", test_judge_preserves_panel_when_all_tiers_fail),
+    ("payg_deepseek_model_id_is_current_shape", test_payg_deepseek_model_id_is_current_shape),
     ("judge_coerces_string_to_list", test_judge_coerces_string_to_list),
     ("judge_empty_panel", test_judge_empty_panel),
     ("fuse_integrates", test_fuse_integrates),

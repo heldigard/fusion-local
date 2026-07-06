@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fusion-cli"
+name = "fusion-local"
 version = "1.0.0"
 source = { editable = "." }
 

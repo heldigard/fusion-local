@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "fusion-local"
 version = "1.0.0"
-description = "Multi-model deliberation (5-field: consensus/contradictions/coverage gaps/unique insights/blind spots). DEFAULT = local panel of subscription workers + cheap_llm judge (~$0); OpenRouter hosted fusion via --openrouter. Graduated from ~/.claude/scripts/fusion-local.py + fusion.py."
+description = "Multi-model deliberation: 5-field structured analysis (consensus/contradictions/coverage gaps/unique insights/blind spots). Local subscription panel + cheap_llm judge (~$0); OpenRouter hosted fusion via --openrouter."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
