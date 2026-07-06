@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .judge import DEFAULT_JUDGE_MODEL, run_judge
-from .panel import run_panel
+from .panel import detect_current_model, run_panel
 
 try:  # version from installed metadata; fallback for editable/source runs
     from importlib.metadata import version as _pkg_version
@@ -34,17 +34,27 @@ class FuseOptions:
     panel_timeout: int = 60
     judge_timeout: int = 30
     min_workers: int = 2
+    current_model: str | None = None
 
 
 def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     """Full fusion: panel → judge → 5-field envelope with sources metadata."""
     o = opts or FuseOptions()
     t0 = time.perf_counter()
-    pr = run_panel(task, preset=o.preset, timeout=o.panel_timeout, min_workers=o.min_workers)
+    current_model = detect_current_model(o.current_model)
+    pr = run_panel(
+        task,
+        preset=o.preset,
+        timeout=o.panel_timeout,
+        min_workers=o.min_workers,
+        current_model=current_model,
+    )
     jd = run_judge(task, pr, cloud_model=o.cloud_model, timeout=o.judge_timeout)
     jd["sources"] = [_source_meta(r) for r in pr]
     jd["total_latency"] = round(time.perf_counter() - t0, 2)
     jd["preset"] = o.preset
+    if current_model:
+        jd["current_model"] = current_model
     return jd
 
 
@@ -57,6 +67,8 @@ def _source_meta(r: dict[str, Any]) -> dict[str, Any]:
     }
     if not r.get("success") and r.get("error"):
         meta["error"] = r["error"]
+    if r.get("skipped"):
+        meta["skipped"] = True
     return meta
 
 
@@ -81,9 +93,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"fusion-local {__version__}")
     parser.add_argument(
         "--preset",
-        choices=["subs", "payg", "mixed"],
+        choices=["subs", "payg", "cheap", "ultra", "mixed"],
         default="subs",
-        help="Panel source: subs ($0 subs workers, default), payg (HTTP), mixed.",
+        help="Panel source: subs ($0 subs workers, default), payg, cheap, ultra, mixed.",
     )
     parser.add_argument(
         "--cloud-model",
@@ -97,6 +109,10 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Min successful panelists before skipping PAYG fallback.",
+    )
+    parser.add_argument(
+        "--current-model",
+        help="Controller model to exclude from the panel (also detected from env when omitted).",
     )
     parser.add_argument(
         "--json", action="store_true", help="Print the full 5-field envelope as JSON."
@@ -160,6 +176,7 @@ def main() -> int:
             panel_timeout=args.panel_timeout,
             judge_timeout=args.judge_timeout,
             min_workers=args.min_workers,
+            current_model=args.current_model,
         ),
     )
 

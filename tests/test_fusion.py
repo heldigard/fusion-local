@@ -86,6 +86,88 @@ def test_panel_subs_falls_back_to_payg() -> None:
     check("subs fallback ran lane2", len(http_called) == 2, str(http_called))
 
 
+def test_panel_cheap_uses_low_cost_models() -> None:
+    calls: list[str] = []
+
+    def fake_http(spec, _task, _timeout):
+        calls.append(spec[2])
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with patch.object(panel_mod, "_http_worker", fake_http):
+        res = panel_mod.run_panel("task", preset="cheap")
+    ok = [r for r in res if r["success"]]
+    check("cheap preset calls all cheap workers", len(ok) == len(panel_mod.PANEL_CHEAP), str(res))
+    check("cheap includes deepseek flash", "deepseek/deepseek-v4-flash" in calls, str(calls))
+    check("cheap includes qwen plus", "qwen/qwen3.7-plus" in calls, str(calls))
+    check("cheap includes minimax m3", "minimax/minimax-m3" in calls, str(calls))
+    check("cheap includes mimo pro", "xiaomi/mimo-v2.5-pro" in calls, str(calls))
+
+
+def test_panel_ultra_uses_verified_frontier_models() -> None:
+    calls: list[str] = []
+
+    def fake_http(spec, _task, _timeout):
+        calls.append(spec[2])
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with patch.object(panel_mod, "_http_worker", fake_http):
+        res = panel_mod.run_panel("task", preset="ultra")
+    ok = [r for r in res if r["success"]]
+    check("ultra preset calls all ultra workers", len(ok) == len(panel_mod.PANEL_ULTRA), str(res))
+    check("ultra includes fable", "anthropic/claude-fable-5" in calls, str(calls))
+    check("ultra includes opus", "anthropic/claude-opus-4.8" in calls, str(calls))
+    check("ultra includes gpt verified fallback", "openai/gpt-5.5-pro" in calls, str(calls))
+    check("ultra excludes nonexistent gpt-5.6", "openai/gpt-5.6" not in calls, str(calls))
+    check("ultra uses gemini pro latest alias", "~google/gemini-pro-latest" in calls, str(calls))
+
+
+def test_panel_excludes_current_payg_model() -> None:
+    calls: list[str] = []
+
+    def fake_http(spec, _task, _timeout):
+        calls.append(spec[2])
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with patch.object(panel_mod, "_http_worker", fake_http):
+        res = panel_mod.run_panel(
+            "task",
+            preset="cheap",
+            current_model="deepseek/deepseek-v4-flash",
+        )
+    check("current payg model not called", "deepseek/deepseek-v4-flash" not in calls, str(calls))
+    skipped = [r for r in res if r.get("skipped")]
+    check(
+        "current payg model reported skipped",
+        skipped and skipped[0]["source"] == "deepseek-v4-flash",
+    )
+
+
+def test_panel_excludes_current_subscription_model() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+        patch.object(panel_mod, "_http_worker", lambda *_args: {"success": False}),
+    ):
+        res = panel_mod.run_panel(
+            "task",
+            preset="subs",
+            min_workers=1,
+            current_model="google/gemini-3.5-flash",
+        )
+    check("current subscription worker not called", "agy35-flash" not in calls, str(calls))
+    check(
+        "other subscription workers still called",
+        "codex-spark" in calls and "zai" in calls,
+        str(calls),
+    )
+    check("current subscription skip reported", any(r.get("skipped") for r in res), str(res))
+
+
 def test_panel_summarize() -> None:
     pr = [
         {"source": "a", "lane": "subscription", "output": "alpha"},
@@ -203,6 +285,26 @@ def test_payg_model_ids_are_current_shape() -> None:
     qwen = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("qwen")]
     check("qwen payg model present", len(qwen) == 1, str(qwen))
     check("qwen model uses canonical openrouter id", qwen[0][2] == "qwen/qwen3.7-max")
+    cheap_ids = {spec[2] for spec in panel_mod.PANEL_CHEAP}
+    check("cheap deepseek is flash", "deepseek/deepseek-v4-flash" in cheap_ids, str(cheap_ids))
+    check("cheap qwen is plus", "qwen/qwen3.7-plus" in cheap_ids, str(cheap_ids))
+    check("cheap minimax is m3", "minimax/minimax-m3" in cheap_ids, str(cheap_ids))
+    check("cheap mimo is v2.5 pro", "xiaomi/mimo-v2.5-pro" in cheap_ids, str(cheap_ids))
+    ultra_ids = {spec[2] for spec in panel_mod.PANEL_ULTRA}
+    check("ultra opus 4.8 present", "anthropic/claude-opus-4.8" in ultra_ids, str(ultra_ids))
+    check("ultra fable 5 present", "anthropic/claude-fable-5" in ultra_ids, str(ultra_ids))
+    check("ultra uses verified gpt 5.5 pro", "openai/gpt-5.5-pro" in ultra_ids, str(ultra_ids))
+    check("ultra avoids unverified gpt 5.6", "openai/gpt-5.6" not in ultra_ids, str(ultra_ids))
+    check(
+        "ultra uses gemini pro latest alias",
+        "~google/gemini-pro-latest" in ultra_ids,
+        str(ultra_ids),
+    )
+    check(
+        "ultra avoids unverified gemini 3.5 pro id",
+        "google/gemini-3.5-pro" not in ultra_ids,
+        str(ultra_ids),
+    )
 
 
 def test_run_lane_isolates_runner_exception() -> None:
@@ -276,6 +378,42 @@ def test_fuse_integrates() -> None:
     check("fuse latency set", isinstance(out["total_latency"], (int, float)))
 
 
+def test_fuse_echoes_current_model() -> None:
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)),
+    ):
+        out = fuse(
+            "task",
+            opts=FuseOptions(
+                preset="cheap",
+                current_model="deepseek/deepseek-v4-flash",
+            ),
+        )
+    check("fuse current model echoed", out["current_model"] == "deepseek/deepseek-v4-flash")
+    check(
+        "fuse source skip metadata",
+        any(s.get("skipped") for s in out["sources"]),
+        str(out["sources"]),
+    )
+
+
 def test_cli_main_json() -> None:
     env = {
         "consensus": "C",
@@ -288,22 +426,35 @@ def test_cli_main_json() -> None:
     with (
         patch.object(
             panel_mod,
-            "_cworker_worker",
-            lambda m, _t, _to: {
-                "source": m,
-                "lane": "subscription",
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
                 "success": True,
                 "output": "o",
             },
         ),
         patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)),
-        patch.object(sys, "argv", ["fusion-local", "Q?", "--json", "--min-workers", "1"]),
+        patch.object(
+            sys,
+            "argv",
+            [
+                "fusion-local",
+                "Q?",
+                "--preset",
+                "cheap",
+                "--current-model",
+                "qwen/qwen3.7-plus",
+                "--json",
+            ],
+        ),
         patch.object(sys, "stdout", buf),
     ):
         rc = fcli.main()
     parsed = json.loads(buf.getvalue())
     check("main --json exit 0", rc == 0, str(rc))
     check("main --json envelope", parsed["consensus"] == "C")
+    check("main --json current model", parsed["current_model"] == "qwen/qwen3.7-plus")
 
 
 def test_cli_version_uses_distribution_name() -> None:
@@ -355,6 +506,10 @@ def test_cli_empty_prompt_errors() -> None:
 TESTS = [
     ("panel_payg_uses_lane2_only", test_panel_payg_uses_lane2_only),
     ("panel_subs_falls_back_to_payg", test_panel_subs_falls_back_to_payg),
+    ("panel_cheap_uses_low_cost_models", test_panel_cheap_uses_low_cost_models),
+    ("panel_ultra_uses_verified_frontier_models", test_panel_ultra_uses_verified_frontier_models),
+    ("panel_excludes_current_payg_model", test_panel_excludes_current_payg_model),
+    ("panel_excludes_current_subscription_model", test_panel_excludes_current_subscription_model),
     ("panel_summarize", test_panel_summarize),
     ("cworker_router_unavailable", test_cworker_router_unavailable),
     ("judge_parses_5field", test_judge_parses_5field),
@@ -367,6 +522,7 @@ TESTS = [
     ("judge_coerces_string_to_list", test_judge_coerces_string_to_list),
     ("judge_empty_panel", test_judge_empty_panel),
     ("fuse_integrates", test_fuse_integrates),
+    ("fuse_echoes_current_model", test_fuse_echoes_current_model),
     ("cli_main_json", test_cli_main_json),
     ("cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),
     ("cli_main_readable", test_cli_main_readable),

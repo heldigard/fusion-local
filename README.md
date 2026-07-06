@@ -81,6 +81,8 @@ Panel **lane-1** (subscription workers, $0) routes through the codex-worker-rout
 fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
 fusion --preset mixed "<Q>"                   # subs + augment with payg
+fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
+fusion --preset ultra --current-model "$MODEL" "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --panel "anthropic/claude-opus-latest,openai/gpt-latest" "<Q>"
@@ -110,4 +112,12 @@ fusion --version
 
 - **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai` (cross-family).
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
+- **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
+- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.5-pro`,
+  `~google/gemini-pro-latest`. The catalog did not list `gpt-5.6` or
+  `google/gemini-3.5-pro` when verified on 2026-07-06, so those are not hardcoded.
 - **Judge**: `deepseek/deepseek-v4-flash` (BYOK $0, 1M ctx) via cheap_llm cascade.
+- **Current-model exclusion**: pass `--current-model`, or set `FUSION_CURRENT_MODEL`,
+  `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, or `QWEN_MODEL`.
+  Matching panelists are skipped and reported in `sources[]` so the controller does not
+  ask the same model to validate itself.

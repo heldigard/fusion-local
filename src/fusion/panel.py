@@ -22,27 +22,74 @@ from . import config
 # Type alias for a lane-2 entry: (alias, url, model_name, api_key_env).
 Spec = tuple[str, str, str, str]
 Worker = TypeVar("Worker")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
 # Lane 1: $0 subscription workers, diverse families. Routed via config.ROUTER
 # (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm).
 PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
 
-# Lane 2: PAYG fallback (HTTP direct, OpenRouter) — universal cross-CLI.
-# (alias, url, model_name, api_key_env)
+# Lane 2: PAYG fallback (HTTP direct, OpenRouter) — universal cross-CLI. PAYG
+# stays strong but economical; cheap/ultra presets are explicit so the controller
+# can pick cost vs depth intentionally.
 PANEL_PAYG: list[tuple[str, str, str, str]] = [
-    (
-        "deepseek-v4-pro",
-        "https://openrouter.ai/api/v1/chat/completions",
-        "deepseek/deepseek-v4-pro",
-        "OPENROUTER_API_KEY",
-    ),
-    (
-        "qwen3.7-max",
-        "https://openrouter.ai/api/v1/chat/completions",
-        "qwen/qwen3.7-max",
-        "OPENROUTER_API_KEY",
-    ),
+    ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
+    ("qwen3.7-max", OPENROUTER_URL, "qwen/qwen3.7-max", OPENROUTER_KEY_ENV),
 ]
+
+PANEL_CHEAP: list[tuple[str, str, str, str]] = [
+    ("deepseek-v4-flash", OPENROUTER_URL, "deepseek/deepseek-v4-flash", OPENROUTER_KEY_ENV),
+    ("qwen3.7-plus", OPENROUTER_URL, "qwen/qwen3.7-plus", OPENROUTER_KEY_ENV),
+    ("minimax-m3", OPENROUTER_URL, "minimax/minimax-m3", OPENROUTER_KEY_ENV),
+    ("mimo-v2.5-pro", OPENROUTER_URL, "xiaomi/mimo-v2.5-pro", OPENROUTER_KEY_ENV),
+]
+
+PANEL_ULTRA: list[tuple[str, str, str, str]] = [
+    ("claude-fable-5", OPENROUTER_URL, "anthropic/claude-fable-5", OPENROUTER_KEY_ENV),
+    ("claude-opus-4.8", OPENROUTER_URL, "anthropic/claude-opus-4.8", OPENROUTER_KEY_ENV),
+    ("gpt-5.5-pro", OPENROUTER_URL, "openai/gpt-5.5-pro", OPENROUTER_KEY_ENV),
+    ("gemini-pro-latest", OPENROUTER_URL, "~google/gemini-pro-latest", OPENROUTER_KEY_ENV),
+]
+
+PAYG_PRESETS: dict[str, list[Spec]] = {
+    "payg": PANEL_PAYG,
+    "cheap": PANEL_CHEAP,
+    "ultra": PANEL_ULTRA,
+}
+
+SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
+    "codex-spark": ("gpt-5.4", "openai/gpt-5.4"),
+    "agy35-flash": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
+    "kimic": ("kimi-k2.7-code", "moonshotai/kimi-k2.7-code"),
+    "zai": ("glm-5.2", "z-ai/glm-5.2"),
+}
+
+MODEL_ALIASES: dict[str, tuple[str, ...]] = {
+    "~google/gemini-pro-latest": (
+        "google/gemini-pro-latest",
+        "google/gemini-3.5-pro",
+        "gemini-pro-latest",
+        "gemini-3.5-pro",
+    ),
+    "anthropic/claude-opus-4.8": ("claude-opus-4-8", "claude-opus-4.8"),
+    "anthropic/claude-fable-5": ("claude-fable-5",),
+    "openai/gpt-5.5-pro": ("gpt-5.5-pro",),
+    "deepseek/deepseek-v4-pro": ("deepseek-v4-pro",),
+    "deepseek/deepseek-v4-flash": ("deepseek-v4-flash",),
+    "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max"),
+    "qwen/qwen3.7-plus": ("qwen3.7-plus", "qwen/qwen3.7-plus"),
+    "minimax/minimax-m3": ("minimax-m3", "minimax-3"),
+    "xiaomi/mimo-v2.5-pro": ("mimo-v2.5-pro", "mimo-2.5-pro"),
+}
+
+CURRENT_MODEL_ENV_KEYS = (
+    "FUSION_CURRENT_MODEL",
+    "CONTROLLER_MODEL",
+    "CODEX_MODEL",
+    "ANTHROPIC_MODEL",
+    "GEMINI_MODEL",
+    "QWEN_MODEL",
+)
 
 # Recursion guard — panelists answer directly, no tools / no delegation.
 WORKER_GUARD = (
@@ -50,6 +97,98 @@ WORKER_GUARD = (
     "You are a deliberation panelist. Give your direct, reasoned answer to the TASK. "
     "Do NOT use tools, APIs, or further delegation. Text answer only.\n\nTASK:\n"
 )
+
+
+def detect_current_model(explicit: str | None = None) -> str | None:
+    """Best-effort current controller model for panel de-duplication."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    identity = os.environ.get("CLAUDE_AGENT_IDENTITY", "").strip()
+    if identity:
+        try:
+            payload = json.loads(identity)
+            model = str(payload.get("model") or "").strip()
+            if model:
+                return model
+        except json.JSONDecodeError:
+            parts = identity.split(":")
+            if len(parts) >= 2 and parts[1].strip():
+                return parts[1].strip()
+    for key in CURRENT_MODEL_ENV_KEYS:
+        model = os.environ.get(key, "").strip()
+        if model:
+            return model
+    return None
+
+
+def _model_key(value: str) -> str:
+    return "".join(ch for ch in value.strip().lower().lstrip("~") if ch.isalnum())
+
+
+def _candidate_keys(names: Sequence[str]) -> set[str]:
+    keys: set[str] = set()
+    for name in names:
+        if not name:
+            continue
+        keys.add(_model_key(name))
+        for alias in MODEL_ALIASES.get(name, ()):
+            keys.add(_model_key(alias))
+        normalized = name.strip().lower().lstrip("~")
+        for model, aliases in MODEL_ALIASES.items():
+            if normalized == model.lstrip("~") or normalized in aliases:
+                keys.add(_model_key(model))
+                keys.update(_model_key(alias) for alias in aliases)
+    return keys
+
+
+def _worker_model_names(worker: Worker) -> tuple[str, ...]:
+    if isinstance(worker, tuple):
+        alias, _url, model, _key_env = worker
+        return (alias, model)
+    return (str(worker), *SUBS_WORKER_MODELS.get(str(worker), ()))
+
+
+def _matches_current_model(worker: Worker, current_model: str | None) -> bool:
+    if not current_model:
+        return False
+    current_keys = _candidate_keys((current_model,))
+    worker_keys = _candidate_keys(_worker_model_names(worker))
+    return bool(current_keys & worker_keys)
+
+
+def _skip_current_result(worker: Worker, current_model: str) -> dict[str, Any]:
+    if isinstance(worker, tuple):
+        source = worker[0]
+        lane = "payg"
+    else:
+        source = str(worker)
+        lane = "subscription"
+    return {
+        "source": source,
+        "lane": lane,
+        "success": False,
+        "skipped": True,
+        "error": f"skipped current controller model ({current_model})",
+    }
+
+
+def _without_current_model(
+    workers: Sequence[Worker], current_model: str | None
+) -> tuple[list[Worker], list[dict[str, Any]]]:
+    if not current_model:
+        return list(workers), []
+    selected: list[Worker] = []
+    skipped: list[dict[str, Any]] = []
+    for worker in workers:
+        if _matches_current_model(worker, current_model):
+            skipped.append(_skip_current_result(worker, current_model))
+        else:
+            selected.append(worker)
+    return selected, skipped
+
+
+def _payg_panel_for_preset(preset: str) -> list[Spec]:
+    return PAYG_PRESETS.get(preset, PANEL_PAYG)
 
 
 # --- Lane 1: cworker subprocess ($0 subscription workers) -------------------
@@ -203,21 +342,31 @@ def run_panel(
     preset: str = "subs",
     timeout: int = 60,
     min_workers: int = 2,
+    current_model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run the deliberation panel. Successful outputs first, failures after.
 
     preset:
       - "subs"  : lane 1 only ($0 subscription). Fallback to lane 2 if < min_workers succeed.
       - "payg"  : lane 2 only (universal PAYG HTTP direct).
+      - "cheap" : low-cost OpenRouter lane 2 panel.
+      - "ultra" : strongest verified OpenRouter lane 2 panel.
       - "mixed" : lane 1, then augment with lane 2 if needed.
     """
     preset = preset or "subs"
+    current_model = detect_current_model(current_model)
     all_results: list[dict[str, Any]] = []
     if preset in ("subs", "mixed"):
-        all_results.extend(_run_lane(PANEL_SUBS, _cworker_runner, task, timeout))
+        subs_workers, skipped = _without_current_model(PANEL_SUBS, current_model)
+        all_results.extend(skipped)
+        all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
-    if preset == "payg" or len(ok) < min_workers:
-        all_results.extend(_run_lane(PANEL_PAYG, _http_runner, task, timeout))
+    if preset in PAYG_PRESETS or len(ok) < min_workers:
+        payg_workers, skipped = _without_current_model(
+            _payg_panel_for_preset(preset), current_model
+        )
+        all_results.extend(skipped)
+        all_results.extend(_run_lane(payg_workers, _http_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
     return ok + [r for r in all_results if not r.get("success")]
 
