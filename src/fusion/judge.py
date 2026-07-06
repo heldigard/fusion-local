@@ -18,9 +18,9 @@ from .panel import summarize as _summarize_panel
 
 DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"  # BYOK $0, 1M ctx
 
-# Contract floor: this consumer needs the declared public API + ``cloud_model``
-# param (cheap_llm SemVer >= 1.1). require() trips loudly on older installs.
-_CHEAP_LLM_MIN_VERSION = "1.1"
+# Contract floor: this consumer needs ``cloud_model`` plus schema validation that
+# accepts empty JSON arrays (cheap_llm SemVer >= 1.1.1).
+_CHEAP_LLM_MIN_VERSION = "1.1.1"
 
 FUSION_FIELDS: tuple[str, ...] = (
     "consensus",
@@ -105,7 +105,7 @@ def run_judge(
             error=(res.get("error") or "judge output not valid JSON"),
             panel_evidence=_panel_evidence(panel_results),
         )
-    if not res.get("fields_ok"):
+    if not (res.get("fields_ok") and _has_fusion_schema(parsed)):
         return empty_fields(
             consensus="Judge returned JSON that failed the required fusion schema; use panel_evidence for raw model signal.",
             judge_model=res.get("model"),
@@ -136,6 +136,11 @@ def _parse_judge_json(res: dict[str, Any]) -> dict[str, Any] | None:
         return json.loads(res["text"])
     except (json.JSONDecodeError, TypeError):
         return None
+
+
+def _has_fusion_schema(parsed: dict[str, Any]) -> bool:
+    """Validate Fusion's required keys without rejecting intentionally empty arrays."""
+    return all(field in parsed for field in FUSION_FIELDS)
 
 
 def _panel_evidence(panel_results: list[dict[str, Any]]) -> list[dict[str, Any]]:

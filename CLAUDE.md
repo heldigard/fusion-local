@@ -41,7 +41,7 @@ Each module is one cohesive feature. Module/function names don't collide (`run_p
 ```
 PANEL LANE 1 ($0 subs, parallel)   codex-spark · agy35-flash · kimic · zai
     fallback when < min_workers succeed ↓
-PANEL LANE 2 (PAYG, HTTP direct)   deepseek-reasoner · or-qwenc-max (OpenRouter)
+PANEL LANE 2 (PAYG, HTTP direct)   deepseek-v4-pro · qwen3.7-max (OpenRouter)
     ↓
 JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_PROMPT
     → 5-field JSON {consensus, contradictions, coverage_gaps, unique_insights, blind_spots}
@@ -98,5 +98,5 @@ fusion --version
 ## Model routing
 
 - **Panel lane 1 ($0 subs)**: `["codex-spark", "agy35-flash", "kimic", "zai"]`.
-- **Panel lane 2 (PAYG fallback)**: `deepseek-reasoner`, `or-qwenc-max`.
+- **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max`.
 - **Judge**: `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"` (override `--cloud-model`).

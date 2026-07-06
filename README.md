@@ -109,5 +109,5 @@ fusion --version
 ## Model routing
 
 - **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai` (cross-family).
-- **Panel lane 2 (PAYG fallback)**: `deepseek-reasoner`, `or-qwenc-max` (OpenRouter HTTP).
+- **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
 - **Judge**: `deepseek/deepseek-v4-flash` (BYOK $0, 1M ctx) via cheap_llm cascade.

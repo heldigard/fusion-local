@@ -158,16 +158,30 @@ def test_judge_graceful_on_invalid_json() -> None:
     check("invalid preserves panel evidence", jd["panel_evidence"][0]["output"] == "y")
 
 
-def test_judge_rejects_schema_invalid_json() -> None:
+def test_judge_rejects_missing_schema_fields() -> None:
     env = {
         "consensus": "C",
         "contradictions": [],
     }
-    with patch("cheap_llm.cheap_complete", _fake_cheap_complete(env, fields_ok=False)):
+    with patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)):
         jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
-    check("fields_ok false → judge_valid False", jd["judge_valid"] is False)
-    check("fields_ok false → panel evidence kept", jd["panel_evidence"][0]["output"] == "y")
-    check("fields_ok false → schema error", "schema" in (jd.get("error") or ""))
+    check("missing fields → judge_valid False", jd["judge_valid"] is False)
+    check("missing fields → panel evidence kept", jd["panel_evidence"][0]["output"] == "y")
+    check("missing fields → schema error", "schema" in (jd.get("error") or ""))
+
+
+def test_judge_accepts_empty_schema_arrays() -> None:
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+    with patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)):
+        jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
+    check("empty fusion arrays accepted", jd["judge_valid"] is True)
+    check("empty contradictions preserved", jd["contradictions"] == [])
 
 
 def test_judge_preserves_panel_when_all_tiers_fail() -> None:
@@ -180,11 +194,15 @@ def test_judge_preserves_panel_when_all_tiers_fail() -> None:
     check("empty judge → evidence output", jd["panel_evidence"][0]["output"] == "panel answer")
 
 
-def test_payg_deepseek_model_id_is_current_shape() -> None:
+def test_payg_model_ids_are_current_shape() -> None:
     deepseek = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("deepseek")]
     check("deepseek payg model present", len(deepseek) == 1, str(deepseek))
     check("deepseek reasoner stale id removed", deepseek[0][2] != "deepseek/deepseek-reasoner")
-    check("deepseek model is openrouter id", deepseek[0][2].startswith("deepseek/"))
+    check("deepseek v3.2 stale id removed", deepseek[0][2] != "deepseek/deepseek-v3.2")
+    check("deepseek model is v4 pro", deepseek[0][2] == "deepseek/deepseek-v4-pro")
+    qwen = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("qwen")]
+    check("qwen payg model present", len(qwen) == 1, str(qwen))
+    check("qwen model uses canonical openrouter id", qwen[0][2] == "qwen/qwen3.7-max")
 
 
 def test_run_lane_isolates_runner_exception() -> None:
@@ -341,9 +359,10 @@ TESTS = [
     ("cworker_router_unavailable", test_cworker_router_unavailable),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
-    ("judge_rejects_schema_invalid_json", test_judge_rejects_schema_invalid_json),
+    ("judge_rejects_missing_schema_fields", test_judge_rejects_missing_schema_fields),
+    ("judge_accepts_empty_schema_arrays", test_judge_accepts_empty_schema_arrays),
     ("judge_preserves_panel_when_all_tiers_fail", test_judge_preserves_panel_when_all_tiers_fail),
-    ("payg_deepseek_model_id_is_current_shape", test_payg_deepseek_model_id_is_current_shape),
+    ("payg_model_ids_are_current_shape", test_payg_model_ids_are_current_shape),
     ("run_lane_isolates_runner_exception", test_run_lane_isolates_runner_exception),
     ("judge_coerces_string_to_list", test_judge_coerces_string_to_list),
     ("judge_empty_panel", test_judge_empty_panel),

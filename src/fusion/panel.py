@@ -31,15 +31,15 @@ PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
 # (alias, url, model_name, api_key_env)
 PANEL_PAYG: list[tuple[str, str, str, str]] = [
     (
-        "deepseek-v3.2",
+        "deepseek-v4-pro",
         "https://openrouter.ai/api/v1/chat/completions",
-        "deepseek/deepseek-v3.2",
+        "deepseek/deepseek-v4-pro",
         "OPENROUTER_API_KEY",
     ),
     (
-        "or-qwenc-max",
-        "https://openrouter.ai/api/v1/chat/completions",
         "qwen3.7-max",
+        "https://openrouter.ai/api/v1/chat/completions",
+        "qwen/qwen3.7-max",
         "OPENROUTER_API_KEY",
     ),
 ]
