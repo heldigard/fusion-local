@@ -105,19 +105,31 @@ def detect_current_model(explicit: str | None = None) -> str | None:
         return explicit.strip()
     identity = os.environ.get("CLAUDE_AGENT_IDENTITY", "").strip()
     if identity:
-        try:
-            payload = json.loads(identity)
-            model = str(payload.get("model") or "").strip()
-            if model:
-                return model
-        except json.JSONDecodeError:
-            parts = identity.split(":")
-            if len(parts) >= 2 and parts[1].strip():
-                return parts[1].strip()
+        model = _identity_model(identity)
+        if model:
+            return model
     for key in CURRENT_MODEL_ENV_KEYS:
         model = os.environ.get(key, "").strip()
         if model:
             return model
+    return None
+
+
+def _identity_model(identity: str) -> str | None:
+    try:
+        payload = json.loads(identity)
+    except json.JSONDecodeError:
+        return _colon_identity_model(identity)
+    if isinstance(payload, dict):
+        model = str(payload.get("model") or "").strip()
+        return model or None
+    return _colon_identity_model(str(payload))
+
+
+def _colon_identity_model(identity: str) -> str | None:
+    parts = identity.split(":")
+    if len(parts) >= 2 and parts[1].strip():
+        return parts[1].strip()
     return None
 
 

@@ -168,6 +168,16 @@ def test_panel_excludes_current_subscription_model() -> None:
     check("current subscription skip reported", any(r.get("skipped") for r in res), str(res))
 
 
+def test_detect_current_model_ignores_non_object_identity() -> None:
+    with patch.dict(
+        "os.environ",
+        {"CLAUDE_AGENT_IDENTITY": '"not-a-dict"', "FUSION_CURRENT_MODEL": "env-model"},
+        clear=True,
+    ):
+        model = panel_mod.detect_current_model()
+    check("non-object CLAUDE_AGENT_IDENTITY falls back to env", model == "env-model", str(model))
+
+
 def test_panel_summarize() -> None:
     pr = [
         {"source": "a", "lane": "subscription", "output": "alpha"},
@@ -510,6 +520,10 @@ TESTS = [
     ("panel_ultra_uses_verified_frontier_models", test_panel_ultra_uses_verified_frontier_models),
     ("panel_excludes_current_payg_model", test_panel_excludes_current_payg_model),
     ("panel_excludes_current_subscription_model", test_panel_excludes_current_subscription_model),
+    (
+        "detect_current_model_ignores_non_object_identity",
+        test_detect_current_model_ignores_non_object_identity,
+    ),
     ("panel_summarize", test_panel_summarize),
     ("cworker_router_unavailable", test_cworker_router_unavailable),
     ("judge_parses_5field", test_judge_parses_5field),
