@@ -1,4 +1,4 @@
-# fusion-cli
+# fusion-local
 
 Multi-model deliberation (5-field consensus/contradictions/coverage gaps/unique insights/
 blind spots). Public repo: https://github.com/heldigard/fusion-local
@@ -50,7 +50,7 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
 ## Cross-CLI wiring
 
 - `fusion-local` console script on `~/.local/bin` (PATH of every CLI) is the canonical entry.
-- `fusion` shell command = symlink → `fusion-local`.
+- `fusion` shell command = installed alias → `fusion-local`.
 - **lane-1** (subs) uses `FUSION_ROUTER` (default `~/.claude/scripts/codex-worker-router.py`,
   Claude ecosystem). Non-Claude CLIs: set `FUSION_ROUTER=/your/dispatch`, or `FUSION_ROUTER=`
   to disable (panel falls back to lane-2 PAYG, universal).
@@ -58,9 +58,9 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
 
 ## Entry points
 
-- **Console script** (`pip install -e .`): `fusion-local`.
-- **Wired-ecosystem shims**: `~/.claude/scripts/fusion-local.py` + `fusion.py` re-export
-  from the package (backward-compat for the Claude path).
+- **Console scripts** (`pip install -e .`): `fusion-local` and `fusion`.
+- **Wired-ecosystem shim**: `~/.claude/scripts/fusion-local.py` re-exports from the
+  package (backward-compat for the Claude path).
 - **Direct**: `python3 -m fusion.cli "<Q>"`.
 
 ## CLI

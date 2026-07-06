@@ -1,4 +1,4 @@
-# fusion-cli
+# fusion-local
 
 Multi-model **deliberation** for the big-model signal-distillation layer. Produces a
 grounded 5-field structured analysis — **consensus / contradictions / coverage gaps /
@@ -70,9 +70,9 @@ Panel **lane-1** (subscription workers, $0) routes through the codex-worker-rout
 ## Entry points
 
 - **Console script** (`pip install -e .`): `fusion-local` (canonical, cross-CLI).
-- **`fusion` shell command**: symlink → `fusion-local` (on `~/.local/bin`).
-- **Wired-ecosystem shims**: `~/.claude/scripts/fusion-local.py` + `fusion.py` re-export
-  from the package (backward-compat for the Claude path).
+- **`fusion` shell command**: installed alias → `fusion-local`.
+- **Wired-ecosystem shim**: `~/.claude/scripts/fusion-local.py` re-exports from the
+  package (backward-compat for the Claude path).
 - **Direct**: `python3 -m fusion.cli "<Q>"`.
 
 ## CLI
@@ -104,7 +104,7 @@ fusion --version
 
 - Test (offline): `python3 tests/test_fusion.py && python3 tests/test_delegate.py`
 - Lint: `ruff check src/fusion/ tests/`
-- Install editable: `pip install -e . --user --break-system-packages` (exposes `fusion-local`)
+- Install editable: `pip install -e . --user --break-system-packages` (exposes `fusion-local` and `fusion`)
 
 ## Model routing
 

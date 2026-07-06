@@ -13,13 +13,15 @@ import os
 import subprocess
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, TypeVar
 
 from . import config
 
 # Type alias for a lane-2 entry: (alias, url, model_name, api_key_env).
 Spec = tuple[str, str, str, str]
+Worker = TypeVar("Worker")
 
 # Lane 1: $0 subscription workers, diverse families. Routed via config.ROUTER
 # (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm).
@@ -152,7 +154,27 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
 # --- Orchestration ----------------------------------------------------------
 
 
-def _run_lane(workers: list, runner: Any, task: str, timeout: int) -> list[dict[str, Any]]:
+def _worker_failure(worker: Any, error: BaseException) -> dict[str, Any]:
+    if isinstance(worker, tuple) and worker:
+        source = str(worker[0])
+        lane = "payg"
+    else:
+        source = str(worker)
+        lane = "subscription"
+    return {
+        "source": source,
+        "lane": lane,
+        "success": False,
+        "error": f"{type(error).__name__}: {error}",
+    }
+
+
+def _run_lane(
+    workers: Sequence[Worker],
+    runner: Callable[[Worker, str, int], dict[str, Any]],
+    task: str,
+    timeout: int,
+) -> list[dict[str, Any]]:
     """Fan out a lane in parallel. ``runner`` arity: (worker, task, timeout)."""
     if not workers:
         return []
@@ -160,7 +182,11 @@ def _run_lane(workers: list, runner: Any, task: str, timeout: int) -> list[dict[
     with ThreadPoolExecutor(max_workers=min(len(workers), 8)) as pool:
         futs = {pool.submit(runner, w, task, timeout): w for w in workers}
         for fut in as_completed(futs):
-            results.append(fut.result())
+            worker = futs[fut]
+            try:
+                results.append(fut.result())
+            except Exception as exc:  # noqa: BLE001 — one worker must not abort the lane
+                results.append(_worker_failure(worker, exc))
     return results
 
 

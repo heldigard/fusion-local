@@ -29,6 +29,7 @@ test = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 fusion-local = "fusion.cli:main"
+fusion = "fusion.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fusion"]

@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+from importlib.metadata import version
 from unittest.mock import patch
 
 import fusion.cli as fcli
@@ -25,12 +26,12 @@ FAILURES: list[str] = []
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
-    global PASS, FAIL
+    global PASS
     if cond:
         PASS += 1
     else:
-        FAIL += 1
-        FAILURES.append(f"{name}: {detail}" if detail else name)
+        message = f"{name}: {detail}" if detail else name
+        raise AssertionError(message)
 
 
 # === panel feature ==========================================================
@@ -109,7 +110,13 @@ def test_cworker_router_unavailable() -> None:
 # === judge feature ==========================================================
 
 
-def _fake_cheap_complete(envelope: dict, *, json_valid: bool = True, text: str | None = None):
+def _fake_cheap_complete(
+    envelope: dict,
+    *,
+    json_valid: bool = True,
+    fields_ok: bool | None = None,
+    text: str | None = None,
+):
     payload = {
         "text": text if text is not None else json.dumps(envelope),
         "model": "deepseek/deepseek-v4-flash",
@@ -117,7 +124,7 @@ def _fake_cheap_complete(envelope: dict, *, json_valid: bool = True, text: str |
         "latency": 1.0,
         "cost": 0.0,
         "json_valid": json_valid,
-        "fields_ok": json_valid,
+        "fields_ok": json_valid if fields_ok is None else fields_ok,
         "attempts": [],
         "error": None if json_valid else "invalid",
     }
@@ -151,6 +158,18 @@ def test_judge_graceful_on_invalid_json() -> None:
     check("invalid preserves panel evidence", jd["panel_evidence"][0]["output"] == "y")
 
 
+def test_judge_rejects_schema_invalid_json() -> None:
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+    }
+    with patch("cheap_llm.cheap_complete", _fake_cheap_complete(env, fields_ok=False)):
+        jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
+    check("fields_ok false → judge_valid False", jd["judge_valid"] is False)
+    check("fields_ok false → panel evidence kept", jd["panel_evidence"][0]["output"] == "y")
+    check("fields_ok false → schema error", "schema" in (jd.get("error") or ""))
+
+
 def test_judge_preserves_panel_when_all_tiers_fail() -> None:
     with patch("cheap_llm.cheap_complete", _fake_cheap_complete({}, json_valid=False, text="")):
         jd = judge_mod.run_judge(
@@ -166,6 +185,23 @@ def test_payg_deepseek_model_id_is_current_shape() -> None:
     check("deepseek payg model present", len(deepseek) == 1, str(deepseek))
     check("deepseek reasoner stale id removed", deepseek[0][2] != "deepseek/deepseek-reasoner")
     check("deepseek model is openrouter id", deepseek[0][2].startswith("deepseek/"))
+
+
+def test_run_lane_isolates_runner_exception() -> None:
+    def flaky_runner(worker, _task, _timeout):
+        if worker == "bad":
+            raise RuntimeError("boom")
+        return {"source": worker, "lane": "subscription", "success": True, "output": "ok"}
+
+    res = panel_mod._run_lane(["good", "bad"], flaky_runner, "task", 1)
+    ok = [r for r in res if r.get("success")]
+    failed = [r for r in res if not r.get("success")]
+    check("run_lane keeps good worker", len(ok) == 1 and ok[0]["source"] == "good", str(res))
+    check(
+        "run_lane reports failed worker",
+        len(failed) == 1 and failed[0]["source"] == "bad",
+        str(res),
+    )
 
 
 def test_judge_coerces_string_to_list() -> None:
@@ -252,6 +288,10 @@ def test_cli_main_json() -> None:
     check("main --json envelope", parsed["consensus"] == "C")
 
 
+def test_cli_version_uses_distribution_name() -> None:
+    check("cli version from fusion-local dist", fcli.__version__ == version("fusion-local"))
+
+
 def test_cli_main_readable() -> None:
     env = {
         "consensus": "we agree",
@@ -301,12 +341,15 @@ TESTS = [
     ("cworker_router_unavailable", test_cworker_router_unavailable),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
+    ("judge_rejects_schema_invalid_json", test_judge_rejects_schema_invalid_json),
     ("judge_preserves_panel_when_all_tiers_fail", test_judge_preserves_panel_when_all_tiers_fail),
     ("payg_deepseek_model_id_is_current_shape", test_payg_deepseek_model_id_is_current_shape),
+    ("run_lane_isolates_runner_exception", test_run_lane_isolates_runner_exception),
     ("judge_coerces_string_to_list", test_judge_coerces_string_to_list),
     ("judge_empty_panel", test_judge_empty_panel),
     ("fuse_integrates", test_fuse_integrates),
     ("cli_main_json", test_cli_main_json),
+    ("cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),
     ("cli_main_readable", test_cli_main_readable),
     ("cli_empty_prompt_errors", test_cli_empty_prompt_errors),
 ]

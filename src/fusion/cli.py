@@ -20,7 +20,7 @@ from .panel import run_panel
 try:  # version from installed metadata; fallback for editable/source runs
     from importlib.metadata import version as _pkg_version
 
-    __version__ = _pkg_version("fusion-cli")
+    __version__ = _pkg_version("fusion-local")
 except Exception:  # noqa: BLE001
     __version__ = "1.0.0"
 

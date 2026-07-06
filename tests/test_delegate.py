@@ -19,12 +19,12 @@ FAILURES: list[str] = []
 
 
 def check(name: str, cond: bool, detail: str = "") -> None:
-    global PASS, FAIL
+    global PASS
     if cond:
         PASS += 1
     else:
-        FAIL += 1
-        FAILURES.append(f"{name}: {detail}" if detail else name)
+        message = f"{name}: {detail}" if detail else name
+        raise AssertionError(message)
 
 
 def _args(**kw) -> argparse.Namespace:

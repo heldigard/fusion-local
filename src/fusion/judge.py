@@ -105,6 +105,16 @@ def run_judge(
             error=(res.get("error") or "judge output not valid JSON"),
             panel_evidence=_panel_evidence(panel_results),
         )
+    if not res.get("fields_ok"):
+        return empty_fields(
+            consensus="Judge returned JSON that failed the required fusion schema; use panel_evidence for raw model signal.",
+            judge_model=res.get("model"),
+            judge_valid=False,
+            cost=res.get("cost", 0),
+            latency=res.get("latency", 0),
+            error=(res.get("error") or "judge output failed schema validation"),
+            panel_evidence=_panel_evidence(panel_results),
+        )
 
     out = empty_fields()
     out["consensus"] = str(parsed.get("consensus", "") or "")

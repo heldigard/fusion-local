@@ -1,8 +1,8 @@
-"""Shared configuration for fusion-cli (constants + env-driven cross-CLI wiring).
+"""Shared configuration for fusion-local (constants + env-driven cross-CLI wiring).
 
 The cheap_llm bootstrap is a module-level side effect: importing ``fusion.config``
-inserts ``CHEAP_LLM_HOME`` on ``sys.path`` so the judge feature can ``import cheap_llm``
-without a pip dependency. Idempotent.
+tries the installed ``cheap_llm`` package first, then inserts ``CHEAP_LLM_HOME`` on
+``sys.path`` as a fallback. Idempotent.
 """
 
 from __future__ import annotations
