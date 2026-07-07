@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from .capabilities import capabilities_payload
 from .judge import DEFAULT_JUDGE_MODEL, run_judge
 from .panel import detect_current_model, run_panel
 
@@ -89,7 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="fusion-local",
         description="LOCAL multi-model deliberation — panel + judge, 5-field output.",
     )
-    parser.add_argument("prompt", help="Question to deliberate on.")
+    parser.add_argument("prompt", nargs="?", help="Question to deliberate on.")
     parser.add_argument("--version", action="version", version=f"fusion-local {__version__}")
     parser.add_argument(
         "--preset",
@@ -121,6 +122,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--openrouter",
         action="store_true",
         help="Delegate to the legacy OpenRouter fusion instead of running locally.",
+    )
+    parser.add_argument(
+        "--capabilities",
+        action="store_true",
+        help="Emit machine-readable local fusion capability metadata.",
     )
     return parser
 
@@ -165,7 +171,10 @@ def main() -> int:
 
     parser = _build_parser()
     args = parser.parse_args()
-    if not args.prompt.strip():
+    if args.capabilities:
+        print(json.dumps(capabilities_payload(__version__), indent=2, ensure_ascii=False))
+        return 0
+    if not (args.prompt or "").strip():
         parser.error("prompt must not be empty")
 
     envelope = fuse(

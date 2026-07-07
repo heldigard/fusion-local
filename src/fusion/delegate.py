@@ -95,7 +95,8 @@ def _call(payload: dict[str, Any], key: str, timeout_s: int = DEFAULT_TIMEOUT_S)
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        # ENDPOINT is the fixed OpenRouter API URL, not user input.
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # nosemgrep
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

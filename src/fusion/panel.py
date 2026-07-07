@@ -276,7 +276,8 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # PAYG URLs come from fixed preset specs in this module, not user input.
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep
             result = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:300]

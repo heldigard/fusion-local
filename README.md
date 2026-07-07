@@ -86,11 +86,15 @@ fusion --preset ultra --current-model "$MODEL" "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --panel "anthropic/claude-opus-latest,openai/gpt-latest" "<Q>"
+fusion-local --capabilities                   # JSON contract for routers/doctors
 fusion --version
 ```
 
 `--openrouter` early-delegates to `delegate.main` with all args intact (legacy
 `--help`/`--panel`/`--max-tokens` work as if called directly).
+`--capabilities` emits a schema-versioned manifest with safety hints, presets,
+and health metadata; it is for `cli-orchestration doctor`, routers, and workers,
+not for the deliberation hot path.
 
 ## Conventions
 

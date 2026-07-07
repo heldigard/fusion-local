@@ -471,6 +471,22 @@ def test_cli_version_uses_distribution_name() -> None:
     check("cli version from fusion-local dist", fcli.__version__ == version("fusion-local"))
 
 
+def test_cli_capabilities_contract() -> None:
+    buf = io.StringIO()
+    with (
+        patch.object(sys, "argv", ["fusion-local", "--capabilities"]),
+        patch.object(sys, "stdout", buf),
+    ):
+        rc = fcli.main()
+    payload = json.loads(buf.getvalue())
+    by_name = {item["name"]: item for item in payload["capabilities"]}
+    check("capabilities exit 0", rc == 0, str(rc))
+    check("capabilities schema", payload["schema_version"] == 1, str(payload))
+    check("fuse structured", by_name["fuse"]["structured_json"] is True, str(by_name["fuse"]))
+    check("fuse read-only", by_name["fuse"]["read_only"] is True, str(by_name["fuse"]))
+    check("health exposes cheap_llm", payload["health"]["cheap_llm_min_version"] == "1.1.1")
+
+
 def test_cli_main_readable() -> None:
     env = {
         "consensus": "we agree",
@@ -539,6 +555,7 @@ TESTS = [
     ("fuse_echoes_current_model", test_fuse_echoes_current_model),
     ("cli_main_json", test_cli_main_json),
     ("cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),
+    ("cli_capabilities_contract", test_cli_capabilities_contract),
     ("cli_main_readable", test_cli_main_readable),
     ("cli_empty_prompt_errors", test_cli_empty_prompt_errors),
 ]
