@@ -33,6 +33,10 @@ OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 # (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm).
 PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
 
+# Cross-CLI override for lane-1 (mirrors FUSION_ROUTER semantics):
+# unset → PANEL_SUBS default; "" → disable lane-1; "a,b" → custom worker modes.
+PANEL_SUBS_ENV = "FUSION_PANEL_SUBS"
+
 # Lane 2: PAYG fallback (HTTP direct, OpenRouter) — universal cross-CLI. PAYG
 # stays strong but economical; cheap/ultra presets are explicit so the controller
 # can pick cost vs depth intentionally.
@@ -228,6 +232,29 @@ def _payg_panel_for_preset(preset: str) -> list[Spec]:
     return PAYG_PRESETS.get(preset, PANEL_PAYG)
 
 
+def _subs_workers() -> list[str]:
+    """Lane-1 worker modes, honoring the FUSION_PANEL_SUBS cross-CLI override."""
+    env = os.environ.get(PANEL_SUBS_ENV)
+    if env is None:
+        return list(PANEL_SUBS)
+    return [mode.strip() for mode in env.split(",") if mode.strip()]
+
+
+def _scrub(text: str) -> str:
+    """Best-effort secret scrub before fanning the task out to external models.
+
+    The judge path scrubs unconditionally inside cheap_llm; panel workers are
+    ALSO third parties, so scrub here too. Degrades to identity when cheap_llm
+    is unavailable (direct run_panel use without the fuse() preflight).
+    """
+    try:
+        import cheap_llm  # type: ignore[import-not-found]
+
+        return cheap_llm.scrub_secrets(text)
+    except Exception:  # noqa: BLE001 — panel stays usable without cheap_llm
+        return text
+
+
 # --- Lane 1: cworker subprocess ($0 subscription workers) -------------------
 
 
@@ -392,10 +419,11 @@ def run_panel(
       - "mixed" : lane 1, then augment with lane 2 if needed.
     """
     preset = preset or "subs"
+    task = _scrub(task)
     current_model = detect_current_model(current_model)
     all_results: list[dict[str, Any]] = []
     if preset in ("subs", "mixed"):
-        subs_workers, skipped = _without_current_model(PANEL_SUBS, current_model)
+        subs_workers, skipped = _without_current_model(_subs_workers(), current_model)
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]

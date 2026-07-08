@@ -54,7 +54,22 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
 - **lane-1** (subs) uses `FUSION_ROUTER` (default `~/.claude/scripts/codex-worker-router.py`,
   Claude ecosystem). Non-Claude CLIs: set `FUSION_ROUTER=/your/dispatch`, or `FUSION_ROUTER=`
   to disable (panel falls back to lane-2 PAYG, universal).
+- **lane-1 worker modes**: `FUSION_PANEL_SUBS` (unset = default 4 modes; `a,b` = custom;
+  empty = disable lane-1). Same 3-mode semantics as `FUSION_ROUTER`.
 - `--openrouter` early-delegates to `fusion.delegate.main` (legacy).
+
+## Hardening contract (v1.1.0)
+
+- **Judge preflight before panel spend**: `fuse()` gates on `judge.preflight()`
+  (cheap_llm import + `require(CHEAP_LLM_MIN_VERSION)`) BEFORE the panel fan-out.
+  `run_judge` degrades gracefully on drift and preserves `panel_evidence`.
+- **Panel-side secret scrub**: `run_panel` scrubs the task via `cheap_llm.scrub_secrets`
+  before lane-1/lane-2 (best-effort; judge path scrubs unconditionally inside cheap_llm).
+- **Exit codes** (both `--json` and readable): `0` = `judge_valid: true`, `2` = degraded.
+- **`--capabilities` live health**: `health.live` = `{cheap_llm_ok, cheap_llm_version,
+  router_available, openrouter_key_present}` (local probes only; consumed by
+  `cli-orchestration doctor`). `health.cheap_llm_min_version` is DRY from
+  `judge.CHEAP_LLM_MIN_VERSION`.
 
 ## Entry points
 
@@ -88,7 +103,8 @@ fusion --version
 
 - **Vertical-slice**: feature-per-module (config/panel/judge/delegate/cli).
 - `FuseOptions` dataclass — parameter object (keeps `fuse()` arity ≤ 5).
-- **Secret scrub inherited** from cheap_llm (judge path scrubs unconditionally).
+- **Secret scrub on both paths**: judge unconditionally inside cheap_llm; panel scrubs
+  the task before fan-out (best-effort when cheap_llm absent on direct `run_panel`).
 - **Recursion guard** on panelists: `[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]`.
 
 ## Commands

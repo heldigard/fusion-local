@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .capabilities import capabilities_payload
-from .judge import DEFAULT_JUDGE_MODEL, run_judge
+from .judge import DEFAULT_JUDGE_MODEL, empty_fields, preflight, run_judge
 from .panel import detect_current_model, run_panel
 
 try:  # version from installed metadata; fallback for editable/source runs
@@ -42,6 +42,18 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     """Full fusion: panel → judge → 5-field envelope with sources metadata."""
     o = opts or FuseOptions()
     t0 = time.perf_counter()
+    # Judge-transport preflight BEFORE the panel: a missing/drifted cheap_llm
+    # must fail before PAYG/subscription spend, not after the panel already ran.
+    gate = preflight()
+    if not gate["ok"]:
+        return empty_fields(
+            judge_model=None,
+            judge_valid=False,
+            error=gate["error"],
+            sources=[],
+            preset=o.preset,
+            total_latency=round(time.perf_counter() - t0, 2),
+        )
     current_model = detect_current_model(o.current_model)
     pr = run_panel(
         task,
@@ -191,8 +203,10 @@ def main() -> int:
 
     if args.json:
         print(json.dumps(envelope, indent=2, ensure_ascii=False))
-        return 0
-    _print_readable(envelope)
+    else:
+        _print_readable(envelope)
+    # Same exit contract in both output modes: 0 = valid 5-field synthesis,
+    # 2 = degraded (judge invalid/unavailable) — orchestrators can gate on it.
     return 0 if envelope.get("judge_valid") else 2
 
 

@@ -60,6 +60,10 @@ Panel **lane-1** (subscription workers, $0) routes through the codex-worker-rout
 - set `FUSION_ROUTER=/path/to/your/dispatch` to wire lane-1 to your own dispatch, **or**
 - set `FUSION_ROUTER=` (empty) to disable lane-1 entirely.
 
+Lane-1 **worker modes** are overridable the same way: `FUSION_PANEL_SUBS` unset →
+default (`codex-spark,agy35-flash,kimic,zai`); `FUSION_PANEL_SUBS=a,b` → custom
+modes for your dispatch; `FUSION_PANEL_SUBS=` (empty) → disable lane-1.
+
 | CLI | `fusion` command | lane-1 ($0 subs) | lane-2 (PAYG) |
 |-----|------------------|------------------|---------------|
 | Claude Code | ✓ | ✓ (codex-worker-router) | ✓ |
@@ -93,8 +97,14 @@ fusion --version
 `--openrouter` early-delegates to `delegate.main` with all args intact (legacy
 `--help`/`--panel`/`--max-tokens` work as if called directly).
 `--capabilities` emits a schema-versioned manifest with safety hints, presets,
-and health metadata; it is for `cli-orchestration doctor`, routers, and workers,
-not for the deliberation hot path.
+and health metadata — including **live probes** (`health.live`: cheap_llm
+availability/version, router presence, OpenRouter key presence as booleans);
+it is for `cli-orchestration doctor`, routers, and workers, not for the
+deliberation hot path.
+
+**Exit codes** (both `--json` and readable output): `0` = valid 5-field
+synthesis (`judge_valid: true`), `2` = degraded (judge invalid or transport
+unavailable — check `error` and `panel_evidence`).
 
 ## Conventions
 
@@ -103,7 +113,14 @@ not for the deliberation hot path.
 - Module/function names don't collide (`run_panel`, `run_judge` — not `panel.panel`).
 - The judge is `cheap_complete(cloud_model="deepseek-v4-flash")` — never a frontier
   model. Quality comes from the 5-field schema + a 1M-ctx economical judge.
-- **Secret scrub is inherited** from cheap_llm (`scrub_secrets` via `cheap_complete`).
+- **Secret scrub on BOTH paths**: the judge inherits it from cheap_llm
+  (`scrub_secrets` via `cheap_complete`); the panel scrubs the task itself before
+  fanning out to lane-1/lane-2 workers (best-effort — identity when cheap_llm is
+  absent and `run_panel` is called directly).
+- **Judge preflight before panel spend**: `fuse()` gates on the cheap_llm contract
+  (import + `require(>=1.1.1)`) BEFORE fanning out the panel, so a missing/drifted
+  judge transport fails with an actionable error instead of after PAYG spend.
+  `run_judge` itself degrades gracefully and preserves `panel_evidence`.
 - **Recursion guard** on panelists: `[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]`.
 
 ## Commands

@@ -10,6 +10,12 @@ Public API:
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # static types for the lazy PEP 562 exports below
+    from .cli import FuseOptions, fuse, main
+    from .judge import DEFAULT_JUDGE_MODEL, FUSION_FIELDS, run_judge
+    from .panel import run_panel, summarize
 
 try:
     __version__ = version("fusion-local")
@@ -53,6 +59,7 @@ def __getattr__(name: str):
 
 def __dir__() -> list[str]:
     return sorted([*globals(), *_EXPORTS])
+
 
 __all__ = [
     "FuseOptions",

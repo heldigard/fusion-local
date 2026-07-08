@@ -19,8 +19,9 @@ from .panel import summarize as _summarize_panel
 DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"  # BYOK $0, 1M ctx
 
 # Contract floor: this consumer needs ``cloud_model`` plus schema validation that
-# accepts empty JSON arrays (cheap_llm SemVer >= 1.1.1).
-_CHEAP_LLM_MIN_VERSION = "1.1.1"
+# accepts empty JSON arrays (cheap_llm SemVer >= 1.1.1). Public so capabilities
+# and preflight consumers reference ONE source of truth.
+CHEAP_LLM_MIN_VERSION = "1.1.1"
 
 FUSION_FIELDS: tuple[str, ...] = (
     "consensus",
@@ -40,6 +41,31 @@ JUDGE_SCHEMA_PROMPT = """You are the Fusion judge. After the panel deliberates, 
 - "blind_spots": angles or failure modes NONE of the panelists considered. Array of short strings.
 
 Cite the panelist driving each point. Keep the five keys distinct. If a key has no entries, return an empty array (never omit the key). Treat consensus among models with suspicion: shared training bias can make a false claim look like agreement — flag unverifiable claims."""
+
+
+def preflight() -> dict[str, Any]:
+    """Check the judge transport contract WITHOUT spending any panel calls.
+
+    Returns ``{"ok": bool, "version": str | None, "error": str | None}``.
+    ``fuse()`` gates on this before fanning out the panel, so a missing or
+    version-drifted cheap_llm fails before PAYG/subscription spend, not after.
+    """
+    try:
+        import cheap_llm  # type: ignore[import-not-found]
+    except ImportError as exc:
+        hint = (
+            f"cheap_llm unavailable ({exc}). Install: cd ~/cheap-llm && "
+            "pip install -e . --user (or set CHEAP_LLM_HOME to the checkout)"
+        )
+        return _preflight_result(False, None, hint)
+    try:
+        return _preflight_result(True, cheap_llm.require(CHEAP_LLM_MIN_VERSION), None)
+    except RuntimeError as exc:
+        return _preflight_result(False, getattr(cheap_llm, "__version__", None), str(exc))
+
+
+def _preflight_result(ok: bool, version: str | None, error: str | None) -> dict[str, Any]:
+    return {"ok": ok, "version": version, "error": error}
 
 
 def empty_fields(**extra: Any) -> dict[str, Any]:
@@ -76,12 +102,20 @@ def run_judge(
             sources=[],
         )
 
-    # cheap_llm is bootstrapped onto sys.path by ``fusion.config``. The require()
-    # gate declares the contract floor this consumer needs (``cloud_model``) and
-    # fails fast + actionable on version drift, instead of a cryptic mid-run error.
+    # cheap_llm is bootstrapped onto sys.path by ``fusion.config``. preflight()
+    # declares the contract floor this consumer needs (``cloud_model`` + empty-
+    # array schema validation). On drift, the gathered panel signal is PRESERVED
+    # in panel_evidence instead of crashing after the panel already ran.
+    gate = preflight()
+    if not gate["ok"]:
+        return empty_fields(
+            consensus="Judge transport unavailable; use panel_evidence for raw model signal.",
+            judge_model=None,
+            judge_valid=False,
+            error=gate["error"],
+            panel_evidence=_panel_evidence(panel_results),
+        )
     import cheap_llm  # type: ignore[import-not-found]  # noqa: E402
-
-    cheap_llm.require(_CHEAP_LLM_MIN_VERSION)
 
     system = JUDGE_SCHEMA_PROMPT + f"\n\nPANEL RESPONSES:\n{summary}"
     res = cheap_llm.cheap_complete(
@@ -148,16 +182,17 @@ def _panel_evidence(panel_results: list[dict[str, Any]]) -> list[dict[str, Any]]
     evidence: list[dict[str, Any]] = []
     for result in panel_results:
         output = str(result.get("output") or "")
-        if not output:
-            continue
-        excerpt = output[:6000]
-        evidence.append(
-            {
-                "source": result.get("source"),
-                "lane": result.get("lane"),
-                "output": excerpt,
-                "output_chars": len(output),
-                "truncated": len(excerpt) < len(output),
-            }
-        )
+        if output:
+            evidence.append(_evidence_item(result, output))
     return evidence
+
+
+def _evidence_item(result: dict[str, Any], output: str) -> dict[str, Any]:
+    excerpt = output[:6000]
+    return {
+        "source": result.get("source"),
+        "lane": result.get("lane"),
+        "output": excerpt,
+        "output_chars": len(output),
+        "truncated": len(excerpt) < len(output),
+    }

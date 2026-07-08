@@ -143,7 +143,7 @@ def test_panel_excludes_current_payg_model() -> None:
     skipped = [r for r in res if r.get("skipped")]
     check(
         "current payg model reported skipped",
-        skipped and skipped[0]["source"] == "deepseek-v4-flash",
+        bool(skipped) and skipped[0]["source"] == "deepseek-v4-flash",
     )
 
 
@@ -517,7 +517,10 @@ def test_cli_capabilities_contract() -> None:
     check("capabilities schema", payload["schema_version"] == 1, str(payload))
     check("fuse structured", by_name["fuse"]["structured_json"] is True, str(by_name["fuse"]))
     check("fuse read-only", by_name["fuse"]["read_only"] is True, str(by_name["fuse"]))
-    check("health exposes cheap_llm", payload["health"]["cheap_llm_min_version"] == "1.1.1")
+    check(
+        "health exposes cheap_llm",
+        payload["health"]["cheap_llm_min_version"] == judge_mod.CHEAP_LLM_MIN_VERSION,
+    )
 
 
 def test_cli_main_readable() -> None:
@@ -562,6 +565,142 @@ def test_cli_empty_prompt_errors() -> None:
     check("empty prompt → non-zero exit", rc != 0 and rc is not None, str(rc))
 
 
+# === hardening: preflight / scrub / env override / health ==================
+
+
+def test_fuse_preflight_blocks_panel_spend() -> None:
+    calls: list[str] = []
+
+    def recorder(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    gate = {"ok": False, "version": None, "error": "cheap_llm unavailable (test)"}
+    with (
+        patch.object(fcli, "preflight", lambda: gate),
+        patch.object(panel_mod, "_cworker_worker", recorder),
+        patch.object(panel_mod, "_http_worker", recorder),
+    ):
+        out = fuse("task", opts=FuseOptions(preset="subs"))
+    check("preflight fail → no panel spend", calls == [], str(calls))
+    check("preflight fail → judge invalid", out["judge_valid"] is False)
+    check("preflight fail → actionable error", "cheap_llm" in out["error"], str(out))
+    check("preflight fail → empty sources", out["sources"] == [])
+    check("preflight fail → preset echoed", out["preset"] == "subs")
+
+
+def test_judge_degrades_when_transport_drifts() -> None:
+    gate = {"ok": False, "version": "0.9", "error": "cheap_llm 0.9 older than required"}
+    with patch.object(judge_mod, "preflight", lambda: gate):
+        jd = judge_mod.run_judge("task", [{"source": "x", "lane": "payg", "output": "sig"}])
+    check("drift → judge_valid False", jd["judge_valid"] is False)
+    check("drift → error surfaced", "older than required" in jd["error"], str(jd))
+    check("drift → panel evidence kept", jd["panel_evidence"][0]["output"] == "sig")
+
+
+def test_judge_preflight_ok_against_installed() -> None:
+    gate = judge_mod.preflight()
+    check("preflight ok with installed cheap_llm", gate["ok"] is True, str(gate))
+    check("preflight reports version", bool(gate["version"]), str(gate))
+
+
+def test_panel_scrubs_task_before_fanout() -> None:
+    seen: list[str] = []
+
+    def fake_http(spec, task, _timeout):
+        seen.append(task)
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with (
+        patch("cheap_llm.scrub_secrets", lambda _t: "SCRUBBED"),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        panel_mod.run_panel("secret sk-abc", preset="payg")
+    check(
+        "panel task scrubbed",
+        bool(seen) and all(t == "SCRUBBED" for t in seen),
+        str(seen),
+    )
+
+
+def test_panel_subs_env_override() -> None:
+    modes: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        modes.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {"FUSION_PANEL_SUBS": "modeA,modeB"}),
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+    ):
+        panel_mod.run_panel("task", preset="subs", min_workers=1)
+    check("env override selects custom lane-1", sorted(modes) == ["modeA", "modeB"], str(modes))
+
+
+def test_panel_subs_env_empty_disables_lane1() -> None:
+    cworker_calls: list[str] = []
+    http_calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        cworker_calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    def fake_http(spec, _task, _timeout):
+        http_calls.append(spec[0])
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {"FUSION_PANEL_SUBS": ""}),
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        panel_mod.run_panel("task", preset="subs", min_workers=2)
+    check("empty override skips lane-1", cworker_calls == [], str(cworker_calls))
+    check("empty override falls back to lane-2", len(http_calls) == 2, str(http_calls))
+
+
+def test_capabilities_health_live() -> None:
+    import fusion.capabilities as caps_mod
+
+    payload = caps_mod.capabilities_payload("test")
+    health = payload["health"]
+    check(
+        "health min version DRY with judge",
+        health["cheap_llm_min_version"] == judge_mod.CHEAP_LLM_MIN_VERSION,
+        str(health),
+    )
+    check("health names panel subs env", health["panel_subs_env"] == "FUSION_PANEL_SUBS")
+    live = health["live"]
+    check("live cheap_llm probe ok", live["cheap_llm_ok"] is True, str(live))
+    check("live reports cheap_llm version", bool(live["cheap_llm_version"]), str(live))
+    check("live router probe is bool", isinstance(live["router_available"], bool))
+    check("live key probe is bool", isinstance(live["openrouter_key_present"], bool))
+
+
+def test_cli_json_exit_reflects_judge_validity() -> None:
+    buf = io.StringIO()
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", _fake_cheap_complete({}, json_valid=False, text="raw")),
+        patch.object(sys, "argv", ["fusion-local", "Q?", "--preset", "cheap", "--json"]),
+        patch.object(sys, "stdout", buf),
+    ):
+        rc = fcli.main()
+    parsed = json.loads(buf.getvalue())
+    check("json exit 2 on invalid judge", rc == 2, str(rc))
+    check("json envelope still parseable", parsed["judge_valid"] is False)
+
+
 TESTS = [
     ("panel_payg_uses_lane2_only", test_panel_payg_uses_lane2_only),
     ("panel_subs_falls_back_to_payg", test_panel_subs_falls_back_to_payg),
@@ -599,6 +738,14 @@ TESTS = [
     ("cli_capabilities_contract", test_cli_capabilities_contract),
     ("cli_main_readable", test_cli_main_readable),
     ("cli_empty_prompt_errors", test_cli_empty_prompt_errors),
+    ("fuse_preflight_blocks_panel_spend", test_fuse_preflight_blocks_panel_spend),
+    ("judge_degrades_when_transport_drifts", test_judge_degrades_when_transport_drifts),
+    ("judge_preflight_ok_against_installed", test_judge_preflight_ok_against_installed),
+    ("panel_scrubs_task_before_fanout", test_panel_scrubs_task_before_fanout),
+    ("panel_subs_env_override", test_panel_subs_env_override),
+    ("panel_subs_env_empty_disables_lane1", test_panel_subs_env_empty_disables_lane1),
+    ("capabilities_health_live", test_capabilities_health_live),
+    ("cli_json_exit_reflects_judge_validity", test_cli_json_exit_reflects_judge_validity),
 ]
 
 
