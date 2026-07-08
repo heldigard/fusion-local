@@ -110,7 +110,12 @@ def test_panel_ultra_uses_verified_frontier_models() -> None:
         calls.append(spec[2])
         return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
 
-    with patch.object(panel_mod, "_http_worker", fake_http):
+    with (
+        # Isolate from the host session: under CLAUDECODE the panel now reads
+        # the real settings.json controller and would rightly skip its seat.
+        patch.dict("os.environ", {}, clear=True),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
         res = panel_mod.run_panel("task", preset="ultra")
     ok = [r for r in res if r["success"]]
     check("ultra preset calls all ultra workers", len(ok) == len(panel_mod.PANEL_ULTRA), str(res))
@@ -176,6 +181,34 @@ def test_detect_current_model_ignores_non_object_identity() -> None:
     ):
         model = panel_mod.detect_current_model()
     check("non-object CLAUDE_AGENT_IDENTITY falls back to env", model == "env-model", str(model))
+
+
+def test_detect_current_model_reads_claude_settings() -> None:
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = _P(tmp)
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('{"model": "claude-fable-5[1m]"}', encoding="utf-8")
+        with (
+            patch.dict("os.environ", {"CLAUDECODE": "1"}, clear=True),
+            patch.object(panel_mod.Path, "home", staticmethod(lambda: home)),
+        ):
+            model = panel_mod.detect_current_model()
+    check("CLAUDECODE session reads settings.json model", model == "claude-fable-5[1m]", str(model))
+
+
+def test_current_model_1m_suffix_matches_panel_seat() -> None:
+    seat = ("claude-fable-5", panel_mod.OPENROUTER_URL, "anthropic/claude-fable-5", "K")
+    matched = panel_mod._matches_current_model(seat, "claude-fable-5[1m]")
+    check("[1m] suffix does not defeat panel de-dup", matched, str(matched))
+    unrelated = ("gpt-5.5-pro", panel_mod.OPENROUTER_URL, "openai/gpt-5.5-pro", "K")
+    check(
+        "unrelated seat still allowed",
+        not panel_mod._matches_current_model(unrelated, "claude-fable-5[1m]"),
+    )
 
 
 def test_panel_summarize() -> None:
@@ -539,6 +572,14 @@ TESTS = [
     (
         "detect_current_model_ignores_non_object_identity",
         test_detect_current_model_ignores_non_object_identity,
+    ),
+    (
+        "detect_current_model_reads_claude_settings",
+        test_detect_current_model_reads_claude_settings,
+    ),
+    (
+        "current_model_1m_suffix_matches_panel_seat",
+        test_current_model_1m_suffix_matches_panel_seat,
     ),
     ("panel_summarize", test_panel_summarize),
     ("cworker_router_unavailable", test_cworker_router_unavailable),

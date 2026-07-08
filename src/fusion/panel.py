@@ -1,3 +1,6 @@
+# vs-soft-allow — single-responsibility panel orchestrator: lane runners take
+# the full fan-out context as kwargs; splitting per-lane files would scatter
+# one cohesive flow.
 """Panel feature — gather N diverse model responses (lanes + orchestration).
 
 Lane 1 ($0 subs): cworker router → codex-spark/agy35-flash/kimic/zai (Claude
@@ -15,6 +18,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, TypeVar
 
 from . import config
@@ -112,7 +116,22 @@ def detect_current_model(explicit: str | None = None) -> str | None:
         model = os.environ.get(key, "").strip()
         if model:
             return model
+    # Inside a live Claude Code session none of the identity envs is exported;
+    # settings.json holds the pinned controller model (e.g. claude-fable-5[1m]).
+    # Without this fallback the ultra preset can seat the controller's own
+    # model on the panel (echo-chamber seat).
+    if os.environ.get("CLAUDECODE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return _claude_settings_model()
     return None
+
+
+def _claude_settings_model() -> str | None:
+    settings = Path.home() / ".claude" / "settings.json"
+    try:
+        model = str(json.loads(settings.read_text(encoding="utf-8")).get("model") or "")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return model.strip() or None
 
 
 def _identity_model(identity: str) -> str | None:
@@ -133,8 +152,14 @@ def _colon_identity_model(identity: str) -> str | None:
     return None
 
 
+def _normalize_name(value: str) -> str:
+    # "[1m]" is Claude Code's context-window suffix, not part of the model id;
+    # without stripping it "claude-fable-5[1m]" never matches "claude-fable-5".
+    return value.strip().lower().lstrip("~").replace("[1m]", "")
+
+
 def _model_key(value: str) -> str:
-    return "".join(ch for ch in value.strip().lower().lstrip("~") if ch.isalnum())
+    return "".join(ch for ch in _normalize_name(value) if ch.isalnum())
 
 
 def _candidate_keys(names: Sequence[str]) -> set[str]:
