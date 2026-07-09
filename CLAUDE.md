@@ -119,8 +119,8 @@ fusion --version
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max`.
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
 - **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.5-pro`,
-  `~google/gemini-pro-latest`. Do not hardcode unlisted `gpt-5.6` or
-  `google/gemini-3.5-pro`; use verified catalog IDs only.
+  `~google/gemini-pro-latest`. GPT-5.6 is GA in OpenAI/Codex, but do not
+  hardcode an OpenRouter GPT-5.6 ID until this provider-specific catalog is verified.
 - **Judge**: `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"` (override `--cloud-model`).
 - **Current-model exclusion**: `--current-model` or env (`FUSION_CURRENT_MODEL`,
   `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, `QWEN_MODEL`)

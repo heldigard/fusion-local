@@ -135,8 +135,8 @@ unavailable — check `error` and `panel_evidence`).
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
 - **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.5-pro`,
-  `~google/gemini-pro-latest`. The catalog did not list `gpt-5.6` or
-  `google/gemini-3.5-pro` when verified on 2026-07-06, so those are not hardcoded.
+  `~google/gemini-pro-latest`. GPT-5.6 is GA in OpenAI/Codex, but no OpenRouter
+  GPT-5.6 ID is used until its provider-specific catalog is verified.
 - **Judge**: `deepseek/deepseek-v4-flash` (BYOK $0, 1M ctx) via cheap_llm cascade.
 - **Current-model exclusion**: pass `--current-model`, or set `FUSION_CURRENT_MODEL`,
   `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, or `QWEN_MODEL`.

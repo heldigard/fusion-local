@@ -25,7 +25,8 @@ from . import config
 
 # Type alias for a lane-2 entry: (alias, url, model_name, api_key_env).
 Spec = tuple[str, str, str, str]
-Worker = TypeVar("Worker")
+Worker = str | Spec
+LaneWorker = TypeVar("LaneWorker", str, Spec)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
@@ -66,7 +67,7 @@ PAYG_PRESETS: dict[str, list[Spec]] = {
 }
 
 SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
-    "codex-spark": ("gpt-5.4", "openai/gpt-5.4"),
+    "codex-spark": ("gpt-5.6-terra", "openai/gpt-5.6-terra"),
     "agy35-flash": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
     "kimic": ("kimi-k2.7-code", "moonshotai/kimi-k2.7-code"),
     "zai": ("glm-5.2", "z-ai/glm-5.2"),
@@ -214,11 +215,11 @@ def _skip_current_result(worker: Worker, current_model: str) -> dict[str, Any]:
 
 
 def _without_current_model(
-    workers: Sequence[Worker], current_model: str | None
-) -> tuple[list[Worker], list[dict[str, Any]]]:
+    workers: Sequence[LaneWorker], current_model: str | None
+) -> tuple[list[LaneWorker], list[dict[str, Any]]]:
     if not current_model:
         return list(workers), []
-    selected: list[Worker] = []
+    selected: list[LaneWorker] = []
     skipped: list[dict[str, Any]] = []
     for worker in workers:
         if _matches_current_model(worker, current_model):
@@ -374,8 +375,8 @@ def _worker_failure(worker: Any, error: BaseException) -> dict[str, Any]:
 
 
 def _run_lane(
-    workers: Sequence[Worker],
-    runner: Callable[[Worker, str, int], dict[str, Any]],
+    workers: Sequence[LaneWorker],
+    runner: Callable[[LaneWorker, str, int], dict[str, Any]],
     task: str,
     timeout: int,
 ) -> list[dict[str, Any]]:
