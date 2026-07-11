@@ -10,7 +10,7 @@ Public API:
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # static types for the lazy PEP 562 exports below
     from .cli import FuseOptions, fuse, main
@@ -34,7 +34,8 @@ _EXPORTS = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
+    value: Any
     if name == "FuseOptions":
         from .cli import FuseOptions as value
     elif name == "fuse":

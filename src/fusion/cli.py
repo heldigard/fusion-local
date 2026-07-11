@@ -82,6 +82,8 @@ def _source_meta(r: dict[str, Any]) -> dict[str, Any]:
         meta["error"] = r["error"]
     if r.get("skipped"):
         meta["skipped"] = True
+    if isinstance(r.get("duration_seconds"), (int, float)):
+        meta["duration_seconds"] = r["duration_seconds"]
     return meta
 
 

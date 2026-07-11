@@ -58,7 +58,7 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
   empty = disable lane-1). Same 3-mode semantics as `FUSION_ROUTER`.
 - `--openrouter` early-delegates to `fusion.delegate.main` (legacy).
 
-## Hardening contract (v1.1.0)
+## Hardening contract (v1.2.0)
 
 - **Judge preflight before panel spend**: `fuse()` gates on `judge.preflight()`
   (cheap_llm import + `require(CHEAP_LLM_MIN_VERSION)`) BEFORE the panel fan-out.
@@ -66,6 +66,9 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
 - **Panel-side secret scrub**: `run_panel` scrubs the task via `cheap_llm.scrub_secrets`
   before lane-1/lane-2 (best-effort; judge path scrubs unconditionally inside cheap_llm).
 - **Exit codes** (both `--json` and readable): `0` = `judge_valid: true`, `2` = degraded.
+- **Per-source timings**: successful and failed lane workers expose
+  `duration_seconds` in source metadata, so timeout tuning uses evidence rather
+  than total-panel latency guesses.
 - **`--capabilities` live health**: `health.live` = `{cheap_llm_ok, cheap_llm_version,
   router_available, openrouter_key_present}` (local probes only; consumed by
   `cli-orchestration doctor`). `health.cheap_llm_min_version` is DRY from

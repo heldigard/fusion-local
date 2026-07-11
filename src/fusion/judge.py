@@ -51,7 +51,7 @@ def preflight() -> dict[str, Any]:
     version-drifted cheap_llm fails before PAYG/subscription spend, not after.
     """
     try:
-        import cheap_llm  # type: ignore[import-not-found]
+        import cheap_llm  # type: ignore[import-untyped]
     except ImportError as exc:
         hint = (
             f"cheap_llm unavailable ({exc}). Install: cd ~/cheap-llm && "
@@ -115,7 +115,7 @@ def run_judge(
             error=gate["error"],
             panel_evidence=_panel_evidence(panel_results),
         )
-    import cheap_llm  # type: ignore[import-not-found]  # noqa: E402
+    import cheap_llm  # type: ignore[import-untyped]  # noqa: E402
 
     system = JUDGE_SCHEMA_PROMPT + f"\n\nPANEL RESPONSES:\n{summary}"
     res = cheap_llm.cheap_complete(

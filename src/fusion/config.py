@@ -19,7 +19,7 @@ from pathlib import Path
 # the literal CHEAP_LLM_HOME path in the normal (installed) case.
 CHEAP_LLM_HOME = Path(os.environ.get("CHEAP_LLM_HOME", str(Path.home() / "cheap-llm")))
 try:
-    import cheap_llm  # noqa: F401  — primary: editable install
+    import cheap_llm  # type: ignore[import-untyped]  # noqa: F401  — primary: editable install
 except ImportError:
     if str(CHEAP_LLM_HOME) not in sys.path:
         sys.path.insert(0, str(CHEAP_LLM_HOME))

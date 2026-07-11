@@ -365,6 +365,14 @@ def test_run_lane_isolates_runner_exception() -> None:
         len(failed) == 1 and failed[0]["source"] == "bad",
         str(res),
     )
+    check(
+        "run_lane records per-source duration",
+        all(
+            isinstance(r.get("duration_seconds"), float) and r["duration_seconds"] >= 0
+            for r in res
+        ),
+        str(res),
+    )
 
 
 def test_judge_coerces_string_to_list() -> None:

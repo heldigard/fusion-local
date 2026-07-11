@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
@@ -249,7 +250,7 @@ def _scrub(text: str) -> str:
     is unavailable (direct run_panel use without the fuse() preflight).
     """
     try:
-        import cheap_llm  # type: ignore[import-not-found]
+        import cheap_llm  # type: ignore[import-untyped]
 
         return cheap_llm.scrub_secrets(text)
     except Exception:  # noqa: BLE001 — panel stays usable without cheap_llm
@@ -386,12 +387,15 @@ def _run_lane(
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=min(len(workers), 8)) as pool:
         futs = {pool.submit(runner, w, task, timeout): w for w in workers}
+        started = {future: time.monotonic() for future in futs}
         for fut in as_completed(futs):
             worker = futs[fut]
             try:
-                results.append(fut.result())
+                result = fut.result()
             except Exception as exc:  # noqa: BLE001 — one worker must not abort the lane
-                results.append(_worker_failure(worker, exc))
+                result = _worker_failure(worker, exc)
+            result.setdefault("duration_seconds", round(time.monotonic() - started[fut], 3))
+            results.append(result)
     return results
 
 
