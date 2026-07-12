@@ -377,6 +377,17 @@ def test_http_worker_rejects_non_string_content() -> None:
     check("non-string HTTP content is malformed", result["error"] == "malformed response")
 
 
+def test_http_worker_rejects_oversized_response() -> None:
+    with (
+        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.object(panel_mod, "MAX_EXTERNAL_RESPONSE_BYTES", 10),
+        patch.object(panel_mod.urllib.request, "urlopen", return_value=io.BytesIO(b"x" * 11)),
+    ):
+        result = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+    check("oversized PAYG response fails", result["success"] is False, str(result))
+    check("oversized PAYG response is stable", result["error"] == "payg response too large")
+
+
 # === judge feature ==========================================================
 
 
@@ -864,6 +875,23 @@ def test_cli_capabilities_contract() -> None:
     check("capabilities schema", payload["schema_version"] == 1, str(payload))
     check("capabilities canonical version", payload["version"] == fusion.__version__)
     check("fuse structured", by_name["fuse"]["structured_json"] is True, str(by_name["fuse"]))
+    check(
+        "structured flag semantics explicit",
+        "not describe the default" in payload["field_semantics"]["structured_json"],
+        str(payload["field_semantics"]),
+    )
+    check("fuse supports JSON", by_name["fuse"]["supports_json_output"] is True)
+    check("fuse default is text", by_name["fuse"]["default_output_format"] == "text")
+    check(
+        "capabilities default is JSON",
+        by_name["capabilities"]["default_output_format"] == "json",
+    )
+    check("hosted default is text", by_name["openrouter"]["default_output_format"] == "text")
+    for name in ("fuse", "capabilities", "openrouter"):
+        entry = by_name[name]
+        check(f"{name} invocation discoverable", bool(entry["invocation"]["cli"]), str(entry))
+        check(f"{name} exits discoverable", bool(entry["exit_codes"]), str(entry))
+        check(f"{name} recovery discoverable", bool(entry["recovery"]), str(entry))
     check("fuse read-only", by_name["fuse"]["read_only"] is True, str(by_name["fuse"]))
     check("capabilities presets DRY", tuple(by_name["fuse"]["presets"]) == panel_mod.PANEL_PRESETS)
     check(
@@ -1174,6 +1202,7 @@ TESTS = [
     ("cworker_accepts_zero_exit_with_stdout", test_cworker_accepts_zero_exit_with_stdout),
     ("panel_public_errors_hide_untrusted_details", test_panel_public_errors_hide_untrusted_details),
     ("http_worker_rejects_non_string_content", test_http_worker_rejects_non_string_content),
+    ("http_worker_rejects_oversized_response", test_http_worker_rejects_oversized_response),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
     ("judge_rejects_missing_schema_fields", test_judge_rejects_missing_schema_fields),

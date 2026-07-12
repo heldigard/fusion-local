@@ -103,7 +103,8 @@ fusion --version
 `--openrouter` early-delegates to `delegate.main` with all args intact. Hosted
 `--help`/`--version` need no prompt or key; `--panel` accepts 1–8 models; positive
 timeouts/token limits are validated before key lookup, scrub, or HTTP.
-`--capabilities` emits a schema-versioned manifest with safety hints, presets,
+`--capabilities` emits a schema-versioned, self-contained manifest with invocation,
+inputs, prerequisites, output formats, recovery, exit codes, safety hints, presets,
 and health metadata — including **live probes** (`health.live`: cheap_llm
 availability/version, router presence, OpenRouter key presence as booleans);
 it is for `cli-orchestration doctor`, routers, and workers, not for the
@@ -138,6 +139,8 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 - **Safe public errors**: envelopes/sources/stderr use stable one-line diagnostics of at
   most 300 characters and never include provider bodies, stderr, exception messages,
   prompts, headers, or partial stdout.
+- **Bounded HTTP responses**: panel and hosted provider bodies are capped at 4 MiB before
+  decoding, preventing malformed endpoints from causing unbounded in-memory reads.
 - **Judge preflight before panel spend**: `fuse()` gates on the cheap_llm contract
   (import + `require(>=1.1.1)`) BEFORE fanning out the panel, so a missing/drifted
   judge transport fails with an actionable error instead of after PAYG spend.

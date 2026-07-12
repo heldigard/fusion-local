@@ -17,6 +17,7 @@ import urllib.request
 from typing import Any
 
 from ._boundary import (
+    MAX_EXTERNAL_RESPONSE_BYTES,
     SecretScrubError,
     nonempty_arg,
     positive_int_arg,
@@ -118,7 +119,7 @@ def _call(payload: dict[str, Any], key: str, timeout_s: int = DEFAULT_TIMEOUT_S)
     try:
         # ENDPOINT is the fixed OpenRouter API URL, not user input.
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # nosemgrep
-            raw = resp.read()
+            raw = resp.read(MAX_EXTERNAL_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
         raise DelegateFailure(public_error("hosted provider HTTP error", exc.code), 2) from None
     except urllib.error.URLError as exc:
@@ -135,6 +136,8 @@ def _call(payload: dict[str, Any], key: str, timeout_s: int = DEFAULT_TIMEOUT_S)
 
     if not isinstance(raw, bytes):
         raise DelegateFailure("hosted provider returned invalid response bytes", 2)
+    if len(raw) > MAX_EXTERNAL_RESPONSE_BYTES:
+        raise DelegateFailure("hosted provider response too large", 2)
     try:
         result = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -157,6 +160,7 @@ def _extract_text(result: dict[str, Any]) -> str:
 
 
 def _panel_arg(value: str) -> str:
+    # OpenRouter's Fusion plugin contract allows 1-8 analysis_models.
     models = [model.strip() for model in value.split(",") if model.strip()]
     if not 1 <= len(models) <= 8:
         raise argparse.ArgumentTypeError("must contain 1 to 8 comma-separated models")

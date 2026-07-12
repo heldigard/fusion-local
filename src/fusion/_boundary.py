@@ -8,6 +8,7 @@ from typing import Any
 from . import config as _config  # noqa: F401 — bootstraps cheap_llm discovery
 
 PUBLIC_ERROR_MAX_CHARS = 300
+MAX_EXTERNAL_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 class SecretScrubError(RuntimeError):

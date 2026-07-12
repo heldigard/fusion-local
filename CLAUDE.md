@@ -77,6 +77,8 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
   keys rejected, malformed/non-dict results degraded with `panel_evidence`.
 - **Safe public errors**: one line, ≤300 chars, stable metadata only; no bodies, stderr,
   exception messages, prompts, headers, invalid object reprs, or partial stdout.
+- **Bounded provider responses**: panel and hosted HTTP bodies are capped at 4 MiB before
+  decoding; oversized responses fail as normal operational errors.
 - **Router exit-status validation**: lane-1 accepts stdout only when its dispatch process
   exits zero; partial stdout from failed dispatch is never promoted to panel evidence.
 - **Local exit codes**: `0` = `judge_valid: true`, `2` = degraded.
@@ -89,6 +91,8 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
   router_available, openrouter_key_present}` (local probes only; consumed by
   `cli-orchestration doctor`). `health.cheap_llm_min_version` is DRY from
   `judge.CHEAP_LLM_MIN_VERSION`.
+  Each capability also declares invocation, inputs, prerequisites, default/JSON output
+  contracts, exit codes, and recovery semantics for machine-only consumers.
 
 ## Entry points
 

@@ -115,7 +115,7 @@ def test_call_failure_matrix_is_safe() -> None:
         def __exit__(self, *_args):
             return False
 
-        def read(self):
+        def read(self, _size=-1):
             raise RuntimeError(marker)
 
     http_error = urllib.error.HTTPError(
@@ -170,6 +170,24 @@ def test_extract_text_requires_nonempty_string() -> None:
         except delegate.DelegateFailure as exc:
             caught = exc.exit_code == 2
         check("malformed hosted content fails", caught, str(result))
+
+
+def test_call_rejects_oversized_response() -> None:
+    response = io.BytesIO(b"x" * 11)
+    with (
+        patch.object(delegate, "MAX_EXTERNAL_RESPONSE_BYTES", 10),
+        patch.object(delegate.urllib.request, "urlopen", return_value=response),
+    ):
+        caught: delegate.DelegateFailure | None = None
+        try:
+            delegate._call({"messages": []}, "test-key", timeout_s=1)
+        except delegate.DelegateFailure as exc:
+            caught = exc
+    check("oversized hosted response is typed", caught is not None and caught.exit_code == 2)
+    check(
+        "oversized hosted response is stable",
+        str(caught) == "hosted provider response too large",
+    )
 
 
 def test_main_scrub_failure_blocks_http() -> None:
@@ -292,6 +310,7 @@ TESTS = [
     ("scrubbed_prompt_override_enters_payload", test_scrubbed_prompt_override_enters_payload),
     ("call_failure_matrix_is_safe", test_call_failure_matrix_is_safe),
     ("extract_text_requires_nonempty_string", test_extract_text_requires_nonempty_string),
+    ("call_rejects_oversized_response", test_call_rejects_oversized_response),
     ("main_scrub_failure_blocks_http", test_main_scrub_failure_blocks_http),
     ("main_missing_key_blocks_scrub_and_http", test_main_missing_key_blocks_scrub_and_http),
     ("main_success_text_and_raw_json", test_main_success_text_and_raw_json),

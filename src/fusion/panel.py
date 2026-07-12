@@ -24,6 +24,7 @@ from typing import Any, TypeVar
 
 from . import config
 from ._boundary import (
+    MAX_EXTERNAL_RESPONSE_BYTES,
     public_error,
     require_nonempty_string,
     require_positive_int,
@@ -344,7 +345,17 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
     try:
         # PAYG URLs come from fixed preset specs in this module, not user input.
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep
-            result = json.loads(resp.read().decode("utf-8", errors="replace"))
+            raw = resp.read(MAX_EXTERNAL_RESPONSE_BYTES + 1)
+        if not isinstance(raw, bytes):
+            raise TypeError("invalid response bytes")
+        if len(raw) > MAX_EXTERNAL_RESPONSE_BYTES:
+            return {
+                "source": alias,
+                "lane": "payg",
+                "success": False,
+                "error": "payg response too large",
+            }
+        result = json.loads(raw.decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
         return {
             "source": alias,
@@ -437,7 +448,7 @@ def run_panel(
       - "payg"  : lane 2 only (universal PAYG HTTP direct).
       - "cheap" : low-cost OpenRouter lane 2 panel.
       - "ultra" : strongest verified OpenRouter lane 2 panel.
-      - "mixed" : lane 1, then augment with lane 2 if needed.
+      - "mixed" : always run lane 1 and the default PAYG lane 2 panel.
     """
     require_nonempty_string("task", task)
     if preset not in PANEL_PRESETS:
