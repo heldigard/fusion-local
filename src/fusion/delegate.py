@@ -35,10 +35,10 @@ REQUIRE_BY_DEFAULT = os.environ.get("FUSION_REQUIRED_BY_DEFAULT", "1").strip().l
     "off",
 }
 
-# 5-field judge schema — the structured-analysis contract at the heart of the
-# deliberation architecture. Injected as a system message so the judge RETURNS
-# this shape instead of free-form prose.
-JUDGE_SCHEMA_PROMPT = """You are the Fusion judge. After the panel deliberates, return your analysis as EXACTLY these five labeled sections, in this order:
+# Hosted presentation schema. OpenRouter's internal judge returns analysis to
+# the outer model; this system message asks that outer model to expose the five
+# project-standard sections instead of collapsing them into free-form prose.
+JUDGE_SCHEMA_PROMPT = """You are the Fusion result presenter. After the Fusion tool deliberates, return the analysis as EXACTLY these five labeled sections, in this order:
 
 1. **Consensus** — what all or most panelists agreed on (high-confidence; treat as near-fact).
 2. **Contradictions** — where panelists disagreed; name WHICH source said WHAT.
@@ -128,7 +128,13 @@ def _call(payload: dict[str, Any], key: str, timeout_s: int = DEFAULT_TIMEOUT_S)
         raise DelegateFailure(
             public_error("hosted transport error", type(exc).__name__), 2
         ) from None
+    except Exception as exc:  # noqa: BLE001 — external read boundary must not traceback
+        raise DelegateFailure(
+            public_error("hosted transport error", type(exc).__name__), 2
+        ) from None
 
+    if not isinstance(raw, bytes):
+        raise DelegateFailure("hosted provider returned invalid response bytes", 2)
     try:
         result = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -150,6 +156,13 @@ def _extract_text(result: dict[str, Any]) -> str:
     return content
 
 
+def _panel_arg(value: str) -> str:
+    models = [model.strip() for model in value.split(",") if model.strip()]
+    if not 1 <= len(models) <= 8:
+        raise argparse.ArgumentTypeError("must contain 1 to 8 comma-separated models")
+    return ",".join(models)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="fusion",
@@ -157,9 +170,13 @@ def main() -> int:
     )
     parser.add_argument("prompt", nargs="?", help="Question to deliberate on.")
     parser.add_argument("--version", action="version", version=f"fusion-local {__version__}")
-    parser.add_argument("--panel", help="Comma-separated analysis_models (panel).")
-    parser.add_argument("--judge", help="Judge model that produces the structured analysis.")
-    parser.add_argument("--model", help="Outer model (defaults to openrouter/fusion alias).")
+    parser.add_argument("--panel", type=_panel_arg, help="1-8 comma-separated panel models.")
+    parser.add_argument(
+        "--judge", type=nonempty_arg, help="Judge model that produces the structured analysis."
+    )
+    parser.add_argument(
+        "--model", type=nonempty_arg, help="Outer model (defaults to openrouter/fusion alias)."
+    )
     parser.add_argument(
         "--required",
         action="store_true",

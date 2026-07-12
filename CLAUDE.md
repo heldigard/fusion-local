@@ -8,20 +8,23 @@ script on `~/.local/bin`).
 
 ## What it is
 
-The **deliberation layer** for the big model. Two modes, same 5-field output contract:
+The **deliberation layer** for the big model. Two modes, distinct wire contracts:
 
 - **fusion (DEFAULT, local)**: panel of subscription workers ($0) + cheap_llm judge
   (`deepseek-v4-flash` BYOK $0, 1M ctx) + `JUDGE_SCHEMA_PROMPT`. Cost ≈ $0–0.04.
 - **fusion --openrouter**: hosted `openrouter/fusion`, every panelist searches the live
-  web. PAYG, ~½ a frontier call. Use only for FRESH sources.
+  web. PAYG, ~½ a frontier call. Default output is assistant text; `--json` is the raw
+  provider Chat Completion, not the local five-field envelope.
 
-The big model consumes the 5-field analysis and decides — fusion returns ANALYSIS, never
-a merged answer.
+The controller consumes and decides from the local five-field analysis. Hosted mode's
+outer OpenRouter model consumes its internal Fusion analysis and returns assistant text.
 
 ## Architecture (vertical-slice package)
 
 ```
 src/fusion/
+├── _boundary.py   shared validation/error/scrub contracts
+├── _version.py    canonical runtime version
 ├── config.py       constants + cross-CLI wiring (FUSION_ROUTER, cheap_llm bootstrap)
 ├── panel.py        feature: lane-1 (cworker subs) + lane-2 (HTTP PAYG) + orchestration
 ├── judge.py        feature: 5-field schema + cheap_llm judge synthesis
@@ -66,9 +69,19 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
   preserving `panel_evidence` and the structured degraded envelope.
 - **Panel-side secret scrub**: `run_panel` scrubs the task via `cheap_llm.scrub_secrets`
   before lane-1/lane-2 (best-effort; judge path scrubs unconditionally inside cheap_llm).
+- **Hosted fail-closed scrub**: `--openrouter` does not perform HTTP if prompt scrub is
+  unavailable; key/scrub setup failures exit 1.
+- **Validate before spend**: APIs use `ValueError`, CLIs use argparse exit 2; blank tasks,
+  unknown presets and non-positive strict integers reach no preflight/worker/HTTP call.
+- **Strict judge contract**: exact keys and types (`str` + four `list[str]`), duplicate
+  keys rejected, malformed/non-dict results degraded with `panel_evidence`.
+- **Safe public errors**: one line, ≤300 chars, stable metadata only; no bodies, stderr,
+  exception messages, prompts, headers, invalid object reprs, or partial stdout.
 - **Router exit-status validation**: lane-1 accepts stdout only when its dispatch process
   exits zero; partial stdout from failed dispatch is never promoted to panel evidence.
-- **Exit codes** (both `--json` and readable): `0` = `judge_valid: true`, `2` = degraded.
+- **Local exit codes**: `0` = `judge_valid: true`, `2` = degraded.
+- **Hosted exit codes**: `0` usable response, `1` key/scrub setup, `2` usage/operational
+  failure. Hosted `--json` is raw provider JSON on success and stdout is empty on error.
 - **Per-source timings**: successful and failed lane workers expose
   `duration_seconds` in source metadata, so timeout tuning uses evidence rather
   than total-panel latency guesses.
@@ -89,11 +102,12 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
 ```
 fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
-fusion --preset mixed "<Q>"                   # subs + augment with payg
+fusion --preset mixed "<Q>"                   # always subs + default PAYG panel
 fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
 fusion --preset ultra --current-model "$MODEL" "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
+fusion --openrouter --json "<Q>"              # raw OpenRouter Chat Completion JSON
 fusion --version
 ```
 
@@ -107,10 +121,11 @@ fusion --version
 
 ## Conventions
 
-- **Vertical-slice**: feature-per-module (config/panel/judge/delegate/cli).
+- **Vertical-slice**: feature-per-module (config/panel/judge/delegate/cli), with small
+  shared `_boundary` and `_version` contract modules.
 - `FuseOptions` dataclass — parameter object (keeps `fuse()` arity ≤ 5).
-- **Secret scrub on both paths**: judge unconditionally inside cheap_llm; panel scrubs
-  the task before fan-out (best-effort when cheap_llm absent on direct `run_panel`).
+- **Secret scrub on all external paths**: judge unconditionally inside cheap_llm; panel
+  best-effort for direct compatibility; hosted delegate fail-closed before HTTP.
 - **Recursion guard** on panelists: `[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]`.
 
 ## Commands

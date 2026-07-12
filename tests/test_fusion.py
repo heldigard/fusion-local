@@ -14,7 +14,10 @@ import json
 import subprocess
 import sys
 import urllib.error
-from importlib.metadata import PackageNotFoundError, version as distribution_version
+from email.message import Message
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
+from typing import Any
 from unittest.mock import patch
 
 import fusion
@@ -146,9 +149,26 @@ def test_panel_mixed_always_runs_both_lanes() -> None:
         patch.object(panel_mod, "_http_worker", fake_http),
     ):
         res = panel_mod.run_panel("task", preset="mixed", min_workers=1)
-    check("mixed runs all subscription workers", len([c for c in calls if c.startswith("subs")]) == 4)
+    check(
+        "mixed runs all subscription workers",
+        len([c for c in calls if c.startswith("subs")]) == 4,
+    )
     check("mixed runs default payg panel", len([c for c in calls if c.startswith("payg")]) == 2)
     check("mixed returns six successes", len([r for r in res if r["success"]]) == 6, str(res))
+
+    calls.clear()
+    with (
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        res = panel_mod.run_panel(
+            "task",
+            preset="mixed",
+            min_workers=1,
+            current_model="deepseek/deepseek-v4-pro",
+        )
+    check("mixed excludes current payg model", "payg:deepseek-v4-pro" not in calls, str(calls))
+    check("mixed reports current model skip", any(item.get("skipped") for item in res), str(res))
 
 
 def test_panel_invalid_inputs_block_dispatch() -> None:
@@ -329,7 +349,7 @@ def test_panel_public_errors_hide_untrusted_details() -> None:
         panel_mod.OPENROUTER_URL,
         429,
         "rate limited",
-        hdrs=None,
+        hdrs=Message(),
         fp=io.BytesIO(marker.encode()),
     )
     with (
@@ -547,7 +567,8 @@ def test_run_lane_isolates_runner_exception() -> None:
 def test_run_lane_isolates_non_dict_result() -> None:
     def malformed_runner(worker, _task, _timeout):
         if worker == "bad":
-            return None
+            malformed: Any = None
+            return malformed
         return {"source": worker, "lane": "subscription", "success": True, "output": "ok"}
 
     res = panel_mod._run_lane(["good", "bad"], malformed_runner, "task", 1)
@@ -607,7 +628,10 @@ def test_judge_requires_exact_typed_schema() -> None:
             jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
         check("strict schema rejects malformed shape", jd["judge_valid"] is False, str(jd))
 
-    duplicate = '{"consensus":"a","consensus":"b","contradictions":[],"coverage_gaps":[],"unique_insights":[],"blind_spots":[]}'
+    duplicate = (
+        '{"consensus":"a","consensus":"b","contradictions":[],"coverage_gaps":[],'
+        '"unique_insights":[],"blind_spots":[]}'
+    )
     with patch("cheap_llm.cheap_complete", _fake_cheap_complete({}, text=duplicate)):
         jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
     check("strict schema rejects duplicate keys", jd["judge_valid"] is False, str(jd))
@@ -620,10 +644,12 @@ def test_judge_validates_inputs_before_transport() -> None:
         calls.append("judge")
         return {}
 
+    invalid_none: Any = None
+    invalid_items: Any = [None]
     cases = [
         lambda: judge_mod.run_judge("", []),
-        lambda: judge_mod.run_judge("task", None),
-        lambda: judge_mod.run_judge("task", [None]),
+        lambda: judge_mod.run_judge("task", invalid_none),
+        lambda: judge_mod.run_judge("task", invalid_items),
         lambda: judge_mod.run_judge("task", [], timeout=0),
         lambda: judge_mod.run_judge("task", [], timeout=True),
         lambda: judge_mod.run_judge("task", [], cloud_model=" "),
@@ -712,9 +738,10 @@ def test_fuse_invalid_inputs_block_preflight() -> None:
         calls.append("preflight")
         return {"ok": True, "version": "test", "error": None}
 
+    invalid_opts: Any = "bad"
     cases = [
         lambda: fuse(""),
-        lambda: fuse("task", opts="bad"),
+        lambda: fuse("task", opts=invalid_opts),
         lambda: fuse("task", opts=FuseOptions(preset="unknown")),
         lambda: fuse("task", opts=FuseOptions(panel_timeout=0)),
         lambda: fuse("task", opts=FuseOptions(judge_timeout=True)),
@@ -999,6 +1026,21 @@ def test_panel_scrubs_task_before_fanout() -> None:
     )
 
 
+def test_direct_panel_scrub_failure_is_best_effort() -> None:
+    seen: list[str] = []
+
+    def fake_http(spec, task, _timeout):
+        seen.append(task)
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with (
+        patch("cheap_llm.scrub_secrets", side_effect=RuntimeError("scrub down")),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        panel_mod.run_panel("original task", preset="payg")
+    check("direct panel scrub remains best effort", seen == ["original task"] * 2, str(seen))
+
+
 def test_panel_subs_env_override() -> None:
     modes: list[str] = []
 
@@ -1143,7 +1185,10 @@ TESTS = [
     ("run_lane_isolates_runner_exception", test_run_lane_isolates_runner_exception),
     ("run_lane_isolates_non_dict_result", test_run_lane_isolates_non_dict_result),
     ("judge_rejects_wrong_field_types", test_judge_rejects_wrong_field_types),
-    ("judge_degrades_on_non_dict_transport_result", test_judge_degrades_on_non_dict_transport_result),
+    (
+        "judge_degrades_on_non_dict_transport_result",
+        test_judge_degrades_on_non_dict_transport_result,
+    ),
     ("judge_requires_exact_typed_schema", test_judge_requires_exact_typed_schema),
     ("judge_validates_inputs_before_transport", test_judge_validates_inputs_before_transport),
     ("judge_empty_panel", test_judge_empty_panel),
@@ -1157,12 +1202,19 @@ TESTS = [
     ("cli_capabilities_contract", test_cli_capabilities_contract),
     ("cli_main_readable", test_cli_main_readable),
     ("cli_empty_prompt_errors", test_cli_empty_prompt_errors),
-    ("cli_rejects_invalid_options_before_preflight", test_cli_rejects_invalid_options_before_preflight),
-    ("openrouter_help_version_and_capabilities_routing", test_openrouter_help_version_and_capabilities_routing),
+    (
+        "cli_rejects_invalid_options_before_preflight",
+        test_cli_rejects_invalid_options_before_preflight,
+    ),
+    (
+        "openrouter_help_version_and_capabilities_routing",
+        test_openrouter_help_version_and_capabilities_routing,
+    ),
     ("fuse_preflight_blocks_panel_spend", test_fuse_preflight_blocks_panel_spend),
     ("judge_degrades_when_transport_drifts", test_judge_degrades_when_transport_drifts),
     ("judge_preflight_ok_against_installed", test_judge_preflight_ok_against_installed),
     ("panel_scrubs_task_before_fanout", test_panel_scrubs_task_before_fanout),
+    ("direct_panel_scrub_failure_is_best_effort", test_direct_panel_scrub_failure_is_best_effort),
     ("panel_subs_env_override", test_panel_subs_env_override),
     ("panel_subs_env_empty_disables_lane1", test_panel_subs_env_empty_disables_lane1),
     ("capabilities_health_live", test_capabilities_health_live),

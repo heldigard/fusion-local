@@ -219,7 +219,7 @@ def _skip_current_result(worker: Worker, current_model: str) -> dict[str, Any]:
         "lane": lane,
         "success": False,
         "skipped": True,
-        "error": f"skipped current controller model ({current_model})",
+        "error": "skipped current controller model",
     }
 
 

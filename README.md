@@ -11,7 +11,7 @@ Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
 
 ## What it is
 
-Two deliberation modes, **same 5-field output contract**:
+Two deliberation modes with the same multi-perspective goal but different wire contracts:
 
 - **`fusion` (DEFAULT, local)** — a panel of diverse subscription workers (codex-spark /
   agy35-flash / kimic / zai — $0) drafts answers in parallel; a cheap_llm judge
@@ -19,15 +19,20 @@ Two deliberation modes, **same 5-field output contract**:
   back to PAYG HTTP-direct panelists if subs are exhausted. Cost ≈ **$0–0.04**.
 - **`fusion --openrouter`** — the hosted `openrouter/fusion` model where every panelist
   searches the live web before answering. Use when the answer needs FRESH sources
-  (current APIs, recent CVEs, "2026 state of X"). PAYG, ~½ a frontier call.
+  (current APIs, recent CVEs, "2026 state of X"). PAYG, ~½ a frontier call. Default
+  output is assistant text; `--json` is the raw OpenRouter Chat Completion, not the
+  local Fusion envelope.
 
-The brain (big model) consumes the 5-field output and makes the final call — fusion
-returns ANALYSIS, never a merged answer.
+In local mode, the controller consumes the strict 5-field analysis and makes the final
+call. In hosted mode, OpenRouter's outer model consumes its internal Fusion analysis and
+returns assistant text (requested as five labeled sections by this CLI).
 
 ## Architecture (vertical-slice package)
 
 ```
 src/fusion/
+├── _boundary.py   shared input/error/scrub contracts for external boundaries
+├── _version.py    canonical installed-version resolution
 ├── config.py       constants + cross-CLI wiring (FUSION_ROUTER, cheap_llm bootstrap)
 ├── panel.py        feature: lane-1 (cworker subs) + lane-2 (HTTP PAYG) + orchestration
 ├── judge.py        feature: 5-field schema + cheap_llm judge synthesis
@@ -35,8 +40,8 @@ src/fusion/
 ├── cli.py          feature: fuse() + main() + FuseOptions (parameter object)
 └── __init__.py     public API
 tests/
-├── test_fusion.py     panel + judge + fuse + CLI (offline, mocked)
-└── test_delegate.py   legacy payload/key/schema
+├── test_fusion.py     panel + judge + fuse + CLI contracts (offline, mocked)
+└── test_delegate.py   hosted payload/transport/stream/exit contracts (offline, mocked)
 ```
 
 Each module is one cohesive feature (≤5 params/fn, shallow nesting). The judge reuses
@@ -84,39 +89,55 @@ modes for your dispatch; `FUSION_PANEL_SUBS=` (empty) → disable lane-1.
 ```
 fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
-fusion --preset mixed "<Q>"                   # subs + augment with payg
+fusion --preset mixed "<Q>"                   # always run subs + default PAYG panel
 fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
 fusion --preset ultra --current-model "$MODEL" "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --panel "anthropic/claude-opus-latest,openai/gpt-latest" "<Q>"
+fusion --openrouter --json "<Q>"              # raw OpenRouter Chat Completion JSON
 fusion-local --capabilities                   # JSON contract for routers/doctors
 fusion --version
 ```
 
-`--openrouter` early-delegates to `delegate.main` with all args intact (legacy
-`--help`/`--panel`/`--max-tokens` work as if called directly).
+`--openrouter` early-delegates to `delegate.main` with all args intact. Hosted
+`--help`/`--version` need no prompt or key; `--panel` accepts 1–8 models; positive
+timeouts/token limits are validated before key lookup, scrub, or HTTP.
 `--capabilities` emits a schema-versioned manifest with safety hints, presets,
 and health metadata — including **live probes** (`health.live`: cheap_llm
 availability/version, router presence, OpenRouter key presence as booleans);
 it is for `cli-orchestration doctor`, routers, and workers, not for the
 deliberation hot path.
 
-**Exit codes** (both `--json` and readable output): `0` = valid 5-field
-synthesis (`judge_valid: true`), `2` = degraded (judge invalid or transport
-unavailable — check `error` and `panel_evidence`).
+**Local exit codes** (both `--json` and readable): `0` = valid strict 5-field synthesis
+(`judge_valid: true`), `2` = degraded (`error` + optional `panel_evidence`).
+
+**Hosted exit codes:** `0` = usable assistant response, `1` = missing key or fail-closed
+prompt scrub unavailable, `2` = invalid usage or provider/network/malformed response.
+Hosted failures keep stdout empty and diagnostics bounded on stderr.
 
 ## Conventions
 
 - **Vertical-slice package**: each feature is one module (config / panel / judge /
-  delegate / cli). `FuseOptions` is a parameter object (keeps `fuse()` arity ≤ 5).
+  delegate / cli), with `_boundary` and `_version` as small shared contract modules.
+  `FuseOptions` is a parameter object (keeps `fuse()` arity ≤ 5).
 - Module/function names don't collide (`run_panel`, `run_judge` — not `panel.panel`).
 - The judge is `cheap_complete(cloud_model="deepseek-v4-flash")` — never a frontier
   model. Quality comes from the 5-field schema + a 1M-ctx economical judge.
-- **Secret scrub on BOTH paths**: the judge inherits it from cheap_llm
+- **Secret scrub at every third-party boundary**: the judge inherits it from cheap_llm
   (`scrub_secrets` via `cheap_complete`); the panel scrubs the task itself before
   fanning out to lane-1/lane-2 workers (best-effort — identity when cheap_llm is
-  absent and `run_panel` is called directly).
+  absent and `run_panel` is called directly); hosted `--openrouter` fails closed if its
+  prompt cannot be scrubbed.
+- **Validate before spend**: public APIs reject blank tasks, unknown presets, invalid
+  option objects, and non-positive strict integers with `ValueError`; CLIs reject the
+  same inputs through argparse before preflight or dispatch. Explicit `mixed` always
+  runs subscription and PAYG lanes.
+- **Strict judge schema**: exactly the five keys, `consensus: str`, four `list[str]`
+  fields, and no duplicate JSON keys. Malformed results degrade without coercion.
+- **Safe public errors**: envelopes/sources/stderr use stable one-line diagnostics of at
+  most 300 characters and never include provider bodies, stderr, exception messages,
+  prompts, headers, or partial stdout.
 - **Judge preflight before panel spend**: `fuse()` gates on the cheap_llm contract
   (import + `require(>=1.1.1)`) BEFORE fanning out the panel, so a missing/drifted
   judge transport fails with an actionable error instead of after PAYG spend.
@@ -136,6 +157,7 @@ unavailable — check `error` and `panel_evidence`).
 
 - **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai` (cross-family).
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
+- **Mixed preset**: all configured subscription workers plus the default PAYG panel.
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
 - **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.5-pro`,
   `~google/gemini-pro-latest`. GPT-5.6 is GA in OpenAI/Codex, but no OpenRouter
