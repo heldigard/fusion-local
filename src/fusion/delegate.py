@@ -1,12 +1,9 @@
 """Delegate feature — legacy OpenRouter hosted fusion (opt-in via --openrouter).
 
-Every panelist searches the live web before answering; a judge returns the same
-5-field analysis. PAYG on OPENROUTER_API_KEY. Use only when the answer needs
-FRESH sources (current APIs, recent CVEs, "2026 state of X") — otherwise the
-local panel+judge is cheaper.
-
-Self-contained: its own argparse + HTTP transport, no dependency on the rest of
-the package (graduated verbatim from the original ``~/.claude/scripts/fusion.py``).
+Every panelist searches the live web before answering; the outer model returns
+assistant text (or the raw provider Chat Completion with ``--json``). PAYG on
+OPENROUTER_API_KEY. Use only when the answer needs FRESH sources — otherwise
+the local panel+judge is cheaper.
 """
 
 from __future__ import annotations
@@ -18,6 +15,15 @@ import sys
 import urllib.error
 import urllib.request
 from typing import Any
+
+from ._boundary import (
+    SecretScrubError,
+    nonempty_arg,
+    positive_int_arg,
+    public_error,
+    scrub_external_text,
+)
+from ._version import __version__
 
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 FUSION_MODEL = "openrouter/fusion"
@@ -43,22 +49,37 @@ JUDGE_SCHEMA_PROMPT = """You are the Fusion judge. After the panel deliberates, 
 Cite the web source or panelist driving each point. Keep the five sections distinct and labeled so a downstream agent can parse them. Do NOT collapse into a single narrative."""
 
 
+class DelegateFailure(RuntimeError):
+    """Expected hosted-delegate failure with a stable CLI exit code."""
+
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
 def _require_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not key:
-        sys.stderr.write(
-            "fusion: OPENROUTER_API_KEY not set. Add to ~/.zshrc (secrets env-var only).\n"
+        raise DelegateFailure(
+            "OPENROUTER_API_KEY not set (configure it as a secrets environment variable)",
+            1,
         )
-        sys.exit(1)
     return key
 
 
-def _build_payload(args: argparse.Namespace) -> dict[str, Any]:
+def _scrub_prompt(prompt: str) -> str:
+    try:
+        return scrub_external_text(prompt, fail_closed=True)
+    except SecretScrubError:
+        raise DelegateFailure("hosted prompt scrub unavailable", 1) from None
+
+
+def _build_payload(args: argparse.Namespace, prompt: str | None = None) -> dict[str, Any]:
     """Construct the Fusion request. Plugin form lets us override panel + judge."""
     messages: list[dict[str, Any]] = []
     if getattr(args, "schema", True):
         messages.append({"role": "system", "content": JUDGE_SCHEMA_PROMPT})
-    messages.append({"role": "user", "content": args.prompt})
+    messages.append({"role": "user", "content": args.prompt if prompt is None else prompt})
     payload: dict[str, Any] = {"model": FUSION_MODEL, "messages": messages}
 
     plugins: list[dict[str, Any]] = [{"id": "fusion"}]
@@ -97,21 +118,36 @@ def _call(payload: dict[str, Any], key: str, timeout_s: int = DEFAULT_TIMEOUT_S)
     try:
         # ENDPOINT is the fixed OpenRouter API URL, not user input.
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # nosemgrep
-            return json.loads(resp.read().decode("utf-8"))
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        sys.stderr.write(f"fusion: HTTP {exc.code} from OpenRouter:\n{body}\n")
-        sys.exit(2)
+        raise DelegateFailure(public_error("hosted provider HTTP error", exc.code), 2) from None
     except urllib.error.URLError as exc:
-        sys.stderr.write(f"fusion: network error: {exc.reason}\n")
-        sys.exit(2)
+        reason_type = type(exc.reason).__name__ if exc.reason is not None else type(exc).__name__
+        raise DelegateFailure(public_error("hosted network error", reason_type), 2) from None
+    except (TimeoutError, OSError) as exc:
+        raise DelegateFailure(
+            public_error("hosted transport error", type(exc).__name__), 2
+        ) from None
+
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise DelegateFailure("hosted provider returned invalid JSON", 2) from None
+    if not isinstance(result, dict):
+        raise DelegateFailure("hosted provider returned invalid response type", 2)
+    if "error" in result:
+        raise DelegateFailure("hosted provider returned an error response", 2)
+    return result
 
 
 def _extract_text(result: dict[str, Any]) -> str:
     try:
-        return result["choices"][0]["message"]["content"] or ""
+        content = result["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        return json.dumps(result, indent=2)
+        raise DelegateFailure("hosted provider response missing assistant content", 2) from None
+    if not isinstance(content, str) or not content.strip():
+        raise DelegateFailure("hosted provider response has invalid assistant content", 2)
+    return content
 
 
 def main() -> int:
@@ -119,7 +155,8 @@ def main() -> int:
         prog="fusion",
         description="OpenRouter Fusion — multi-model deliberation with web grounding.",
     )
-    parser.add_argument("prompt", help="Question to deliberate on.")
+    parser.add_argument("prompt", nargs="?", help="Question to deliberate on.")
+    parser.add_argument("--version", action="version", version=f"fusion-local {__version__}")
     parser.add_argument("--panel", help="Comma-separated analysis_models (panel).")
     parser.add_argument("--judge", help="Judge model that produces the structured analysis.")
     parser.add_argument("--model", help="Outer model (defaults to openrouter/fusion alias).")
@@ -146,22 +183,28 @@ def main() -> int:
         choices=["minimal", "low", "medium", "high"],
         help="Reasoning effort forwarded to panel + judge.",
     )
-    parser.add_argument("--max-tokens", type=int, help="max_completion_tokens per inner call.")
     parser.add_argument(
-        "--timeout", type=int, default=DEFAULT_TIMEOUT_S, help="Overall timeout (s)."
+        "--max-tokens", type=positive_int_arg, help="max_completion_tokens per inner call."
+    )
+    parser.add_argument(
+        "--timeout", type=positive_int_arg, default=DEFAULT_TIMEOUT_S, help="Overall timeout (s)."
     )
     parser.add_argument("--json", action="store_true", help="Print the raw OpenRouter JSON.")
     args = parser.parse_args()
+    if not (args.prompt or "").strip():
+        parser.error("prompt must not be empty")
 
-    key = _require_key()
-    payload = _build_payload(args)
-    result = _call(payload, key, timeout_s=args.timeout)
-
-    if args.json:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
+    try:
+        key = _require_key()
+        prompt = _scrub_prompt(nonempty_arg(args.prompt))
+        payload = _build_payload(args, prompt=prompt)
+        result = _call(payload, key, timeout_s=args.timeout)
         text = _extract_text(result)
-        print(text if text else json.dumps(result, indent=2, ensure_ascii=False))
+    except DelegateFailure as exc:
+        sys.stderr.write(f"fusion: {exc}\n")
+        return exc.exit_code
+
+    print(json.dumps(result, indent=2, ensure_ascii=False) if args.json else text)
     return 0
 
 

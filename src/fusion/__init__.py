@@ -9,18 +9,14 @@ Public API:
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
+
+from ._version import __version__
 
 if TYPE_CHECKING:  # static types for the lazy PEP 562 exports below
     from .cli import FuseOptions, fuse, main
     from .judge import DEFAULT_JUDGE_MODEL, FUSION_FIELDS, run_judge
     from .panel import run_panel, summarize
-
-try:
-    __version__ = version("fusion-local")
-except PackageNotFoundError:
-    __version__ = "1.0.0"
 
 _EXPORTS = {
     "FuseOptions",

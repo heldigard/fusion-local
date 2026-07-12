@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ._boundary import public_error, require_nonempty_string, require_positive_int
+
 # Importing CHEAP_LLM_HOME from config triggers the cheap_llm sys.path bootstrap
 # (idempotent side-effect in fusion.config) so the lazy `import cheap_llm` below resolves.
 from .config import CHEAP_LLM_HOME  # noqa: F401
@@ -52,16 +54,17 @@ def preflight() -> dict[str, Any]:
     """
     try:
         import cheap_llm  # type: ignore[import-untyped]
-    except ImportError as exc:
+    except ImportError:
         hint = (
-            f"cheap_llm unavailable ({exc}). Install: cd ~/cheap-llm && "
+            "cheap_llm unavailable. Install: cd ~/cheap-llm && "
             "pip install -e . --user (or set CHEAP_LLM_HOME to the checkout)"
         )
         return _preflight_result(False, None, hint)
     try:
         return _preflight_result(True, cheap_llm.require(CHEAP_LLM_MIN_VERSION), None)
-    except RuntimeError as exc:
-        return _preflight_result(False, getattr(cheap_llm, "__version__", None), str(exc))
+    except RuntimeError:
+        error = f"cheap_llm does not satisfy required version >= {CHEAP_LLM_MIN_VERSION}"
+        return _preflight_result(False, getattr(cheap_llm, "__version__", None), error)
 
 
 def _preflight_result(ok: bool, version: str | None, error: str | None) -> dict[str, Any]:
@@ -93,6 +96,14 @@ def run_judge(
     / ``cost`` / ``latency``. Degrades gracefully (parks raw text in ``consensus``)
     when the judge output is not valid JSON.
     """
+    require_nonempty_string("task", task)
+    if not isinstance(panel_results, list) or not all(
+        isinstance(result, dict) for result in panel_results
+    ):
+        raise ValueError("panel_results must be a list of dictionaries")
+    require_nonempty_string("cloud_model", cloud_model, optional=True)
+    require_positive_int("timeout", timeout)
+
     summary = _summarize_panel(panel_results)
     if not summary:
         return empty_fields(
@@ -118,14 +129,36 @@ def run_judge(
     import cheap_llm  # type: ignore[import-untyped]  # noqa: E402
 
     system = JUDGE_SCHEMA_PROMPT + f"\n\nPANEL RESPONSES:\n{summary}"
-    res = cheap_llm.cheap_complete(
-        system=system,
-        prompt=task,
-        schema_hint=list(FUSION_FIELDS),
-        timeout_total=float(timeout),
-        cloud_model=cloud_model,
-        require_json=True,
-    )
+    try:
+        res = cheap_llm.cheap_complete(
+            system=system,
+            prompt=task,
+            schema_hint=list(FUSION_FIELDS),
+            timeout_total=float(timeout),
+            cloud_model=cloud_model,
+            require_json=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — preserve the already-gathered panel signal
+        return empty_fields(
+            consensus="Judge transport failed; use panel_evidence for raw model signal.",
+            judge_model=cloud_model,
+            judge_valid=False,
+            cost=0,
+            latency=0,
+            error=public_error("judge transport error", type(exc).__name__),
+            panel_evidence=_panel_evidence(panel_results),
+        )
+
+    if not isinstance(res, dict):
+        return empty_fields(
+            consensus="Judge transport returned an invalid result; use panel_evidence for raw model signal.",
+            judge_model=cloud_model,
+            judge_valid=False,
+            cost=0,
+            latency=0,
+            error="judge transport returned invalid result type",
+            panel_evidence=_panel_evidence(panel_results),
+        )
 
     parsed = _parse_judge_json(res)
     if not isinstance(parsed, dict):
@@ -136,7 +169,7 @@ def run_judge(
             judge_valid=False,
             cost=res.get("cost", 0),
             latency=res.get("latency", 0),
-            error=(res.get("error") or "judge output not valid JSON"),
+            error="judge output not valid JSON",
             panel_evidence=_panel_evidence(panel_results),
         )
     if not (res.get("fields_ok") and _has_fusion_schema(parsed)):
@@ -146,15 +179,14 @@ def run_judge(
             judge_valid=False,
             cost=res.get("cost", 0),
             latency=res.get("latency", 0),
-            error=(res.get("error") or "judge output failed schema validation"),
+            error="judge output failed schema validation",
             panel_evidence=_panel_evidence(panel_results),
         )
 
     out = empty_fields()
-    out["consensus"] = str(parsed.get("consensus", "") or "")
+    out["consensus"] = parsed["consensus"]
     for key in ("contradictions", "coverage_gaps", "unique_insights", "blind_spots"):
-        val = parsed.get(key, [])
-        out[key] = val if isinstance(val, list) else [str(val)]
+        out[key] = parsed[key]
     out["judge_model"] = res.get("model")
     out["judge_valid"] = True
     out["cost"] = res.get("cost", 0)
@@ -167,14 +199,30 @@ def _parse_judge_json(res: dict[str, Any]) -> dict[str, Any] | None:
     if not (res.get("json_valid") and res.get("text")):
         return None
     try:
-        return json.loads(res["text"])
-    except (json.JSONDecodeError, TypeError):
+        return json.loads(res["text"], object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate JSON object keys instead of silently taking the last value."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def _has_fusion_schema(parsed: dict[str, Any]) -> bool:
-    """Validate Fusion's required keys without rejecting intentionally empty arrays."""
-    return all(field in parsed for field in FUSION_FIELDS)
+    """Validate the exact Fusion key set and value types."""
+    if set(parsed) != set(FUSION_FIELDS) or not isinstance(parsed["consensus"], str):
+        return False
+    return all(
+        isinstance(parsed[field], list)
+        and all(isinstance(item, str) for item in parsed[field])
+        for field in FUSION_FIELDS[1:]
+    )
 
 
 def _panel_evidence(panel_results: list[dict[str, Any]]) -> list[dict[str, Any]]:

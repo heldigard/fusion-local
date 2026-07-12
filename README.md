@@ -120,7 +120,10 @@ unavailable — check `error` and `panel_evidence`).
 - **Judge preflight before panel spend**: `fuse()` gates on the cheap_llm contract
   (import + `require(>=1.1.1)`) BEFORE fanning out the panel, so a missing/drifted
   judge transport fails with an actionable error instead of after PAYG spend.
-  `run_judge` itself degrades gracefully and preserves `panel_evidence`.
+  `run_judge` also degrades gracefully when the judge transport raises after the
+  panel completes, preserving `panel_evidence` and the CLI's structured exit-2 envelope.
+- **Router exit-status validation**: lane-1 accepts stdout only from a zero-exit router;
+  partial stdout from a failed process is discarded rather than judged as evidence.
 - **Recursion guard** on panelists: `[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]`.
 
 ## Commands

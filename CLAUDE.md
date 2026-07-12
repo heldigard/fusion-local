@@ -62,9 +62,12 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
 
 - **Judge preflight before panel spend**: `fuse()` gates on `judge.preflight()`
   (cheap_llm import + `require(CHEAP_LLM_MIN_VERSION)`) BEFORE the panel fan-out.
-  `run_judge` degrades gracefully on drift and preserves `panel_evidence`.
+  `run_judge` degrades gracefully on drift or a post-panel judge transport exception,
+  preserving `panel_evidence` and the structured degraded envelope.
 - **Panel-side secret scrub**: `run_panel` scrubs the task via `cheap_llm.scrub_secrets`
   before lane-1/lane-2 (best-effort; judge path scrubs unconditionally inside cheap_llm).
+- **Router exit-status validation**: lane-1 accepts stdout only when its dispatch process
+  exits zero; partial stdout from failed dispatch is never promoted to panel evidence.
 - **Exit codes** (both `--json` and readable): `0` = `judge_valid: true`, `2` = degraded.
 - **Per-source timings**: successful and failed lane workers expose
   `duration_seconds` in source metadata, so timeout tuning uses evidence rather

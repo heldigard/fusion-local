@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import config
+from ._boundary import (
+    public_error,
+    require_nonempty_string,
+    require_positive_int,
+    scrub_external_text,
+)
 
 # Type alias for a lane-2 entry: (alias, url, model_name, api_key_env).
 Spec = tuple[str, str, str, str]
@@ -66,6 +72,8 @@ PAYG_PRESETS: dict[str, list[Spec]] = {
     "cheap": PANEL_CHEAP,
     "ultra": PANEL_ULTRA,
 }
+
+PANEL_PRESETS: tuple[str, ...] = ("subs", "payg", "cheap", "ultra", "mixed")
 
 SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "codex-spark": ("gpt-5.6-terra", "openai/gpt-5.6-terra"),
@@ -231,7 +239,9 @@ def _without_current_model(
 
 
 def _payg_panel_for_preset(preset: str) -> list[Spec]:
-    return PAYG_PRESETS.get(preset, PANEL_PAYG)
+    if preset in ("subs", "mixed"):
+        return PANEL_PAYG
+    return PAYG_PRESETS[preset]
 
 
 def _subs_workers() -> list[str]:
@@ -249,12 +259,7 @@ def _scrub(text: str) -> str:
     ALSO third parties, so scrub here too. Degrades to identity when cheap_llm
     is unavailable (direct run_panel use without the fuse() preflight).
     """
-    try:
-        import cheap_llm  # type: ignore[import-untyped]
-
-        return cheap_llm.scrub_secrets(text)
-    except Exception:  # noqa: BLE001 — panel stays usable without cheap_llm
-        return text
+    return scrub_external_text(text, fail_closed=False)
 
 
 # --- Lane 1: cworker subprocess ($0 subscription workers) -------------------
@@ -285,23 +290,30 @@ def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
             "source": mode,
             "lane": "subscription",
             "success": False,
-            "error": f"router missing: {exc}",
+            "error": public_error("router missing", type(exc).__name__),
         }
     except Exception as exc:  # noqa: BLE001 — panel must not abort on one worker
         return {
             "source": mode,
             "lane": "subscription",
             "success": False,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": public_error("router failure", type(exc).__name__),
         }
     out = (proc.stdout or "").strip()
+    if proc.returncode != 0:
+        return {
+            "source": mode,
+            "lane": "subscription",
+            "success": False,
+            "error": public_error(f"router exited with status {proc.returncode}"),
+        }
     if out:
         return {"source": mode, "lane": "subscription", "success": True, "output": out}
     return {
         "source": mode,
         "lane": "subscription",
         "success": False,
-        "error": (proc.stderr or "").strip()[:300] or "empty output",
+        "error": "router returned empty output",
     }
 
 
@@ -334,24 +346,26 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosemgrep
             result = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")[:300]
         return {
             "source": alias,
             "lane": "payg",
             "success": False,
-            "error": f"HTTP {exc.code}: {body}",
+            "error": public_error("payg HTTP error", exc.code),
         }
     except Exception as exc:  # noqa: BLE001
         return {
             "source": alias,
             "lane": "payg",
             "success": False,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": public_error("payg transport error", type(exc).__name__),
         }
     try:
-        text = (result["choices"][0]["message"]["content"] or "").strip()
+        content = result["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
+    if not isinstance(content, str):
+        return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
+    text = content.strip()
     if text:
         return {"source": alias, "lane": "payg", "success": True, "output": text}
     return {"source": alias, "lane": "payg", "success": False, "error": "empty content"}
@@ -371,7 +385,7 @@ def _worker_failure(worker: Any, error: BaseException) -> dict[str, Any]:
         "source": source,
         "lane": lane,
         "success": False,
-        "error": f"{type(error).__name__}: {error}",
+        "error": public_error("worker failure", type(error).__name__),
     }
 
 
@@ -394,6 +408,8 @@ def _run_lane(
                 result = fut.result()
             except Exception as exc:  # noqa: BLE001 — one worker must not abort the lane
                 result = _worker_failure(worker, exc)
+            if not isinstance(result, dict):
+                result = _worker_failure(worker, TypeError("invalid worker result"))
             result.setdefault("duration_seconds", round(time.monotonic() - started[fut], 3))
             results.append(result)
     return results
@@ -423,7 +439,12 @@ def run_panel(
       - "ultra" : strongest verified OpenRouter lane 2 panel.
       - "mixed" : lane 1, then augment with lane 2 if needed.
     """
-    preset = preset or "subs"
+    require_nonempty_string("task", task)
+    if preset not in PANEL_PRESETS:
+        raise ValueError(f"preset must be one of: {', '.join(PANEL_PRESETS)}")
+    require_positive_int("timeout", timeout)
+    require_positive_int("min_workers", min_workers)
+    require_nonempty_string("current_model", current_model, optional=True)
     task = _scrub(task)
     current_model = detect_current_model(current_model)
     all_results: list[dict[str, Any]] = []
@@ -432,7 +453,7 @@ def run_panel(
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
-    if preset in PAYG_PRESETS or len(ok) < min_workers:
+    if preset in PAYG_PRESETS or preset == "mixed" or len(ok) < min_workers:
         payg_workers, skipped = _without_current_model(
             _payg_panel_for_preset(preset), current_model
         )

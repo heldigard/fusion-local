@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
-from importlib.metadata import version
+import urllib.error
+from importlib.metadata import PackageNotFoundError, version as distribution_version
 from unittest.mock import patch
 
+import fusion
+import fusion._version as version_mod
 import fusion.cli as fcli
 import fusion.judge as judge_mod
 import fusion.panel as panel_mod
@@ -126,6 +130,53 @@ def test_panel_ultra_uses_verified_frontier_models() -> None:
     check("ultra uses gemini pro latest alias", "~google/gemini-pro-latest" in calls, str(calls))
 
 
+def test_panel_mixed_always_runs_both_lanes() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(f"subs:{mode}")
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    def fake_http(spec, _task, _timeout):
+        calls.append(f"payg:{spec[0]}")
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with (
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        res = panel_mod.run_panel("task", preset="mixed", min_workers=1)
+    check("mixed runs all subscription workers", len([c for c in calls if c.startswith("subs")]) == 4)
+    check("mixed runs default payg panel", len([c for c in calls if c.startswith("payg")]) == 2)
+    check("mixed returns six successes", len([r for r in res if r["success"]]) == 6, str(res))
+
+
+def test_panel_invalid_inputs_block_dispatch() -> None:
+    calls: list[str] = []
+
+    def recorder(*_args, **_kwargs):
+        calls.append("dispatch")
+        return []
+
+    cases = [
+        ("empty task", lambda: panel_mod.run_panel("", preset="subs")),
+        ("unknown preset", lambda: panel_mod.run_panel("task", preset="unknown")),
+        ("zero timeout", lambda: panel_mod.run_panel("task", timeout=0)),
+        ("bool timeout", lambda: panel_mod.run_panel("task", timeout=True)),
+        ("zero min workers", lambda: panel_mod.run_panel("task", min_workers=0)),
+        ("blank model", lambda: panel_mod.run_panel("task", current_model=" ")),
+    ]
+    with patch.object(panel_mod, "_run_lane", recorder):
+        for name, invoke in cases:
+            raised = False
+            try:
+                invoke()
+            except ValueError:
+                raised = True
+            check(f"panel rejects {name}", raised)
+    check("invalid panel input makes zero dispatch", calls == [], str(calls))
+
+
 def test_panel_excludes_current_payg_model() -> None:
     calls: list[str] = []
 
@@ -232,6 +283,80 @@ def test_cworker_router_unavailable() -> None:
     )
 
 
+def test_cworker_rejects_nonzero_exit_with_stdout() -> None:
+    proc = subprocess.CompletedProcess(
+        args=["router"],
+        returncode=17,
+        stdout="partial answer that must not become evidence",
+        stderr="router failed\n" + ("x" * 400),
+    )
+    with (
+        patch.object(panel_mod.config, "ROUTER", panel_mod.Path(__file__)),
+        patch.object(panel_mod.subprocess, "run", return_value=proc),
+    ):
+        res = panel_mod._cworker_worker("codex-spark", "task", 5)
+    check("nonzero router exit fails", res["success"] is False, str(res))
+    check("nonzero router output discarded", "output" not in res, str(res))
+    check("router error includes status", "status 17" in res["error"], res["error"])
+    check("router error is bounded", len(res["error"]) <= 300, str(len(res["error"])))
+    check("router error is single-line", "\n" not in res["error"], res["error"])
+    check("router error excludes stdout", "partial answer" not in res["error"], res["error"])
+
+
+def test_cworker_accepts_zero_exit_with_stdout() -> None:
+    proc = subprocess.CompletedProcess(
+        args=["router"], returncode=0, stdout="complete answer", stderr=""
+    )
+    with (
+        patch.object(panel_mod.config, "ROUTER", panel_mod.Path(__file__)),
+        patch.object(panel_mod.subprocess, "run", return_value=proc),
+    ):
+        res = panel_mod._cworker_worker("codex-spark", "task", 5)
+    check("zero router exit succeeds", res["success"] is True, str(res))
+    check("zero router output preserved", res["output"] == "complete answer", str(res))
+
+
+def test_panel_public_errors_hide_untrusted_details() -> None:
+    marker = "SECRET_MARKER"
+    with (
+        patch.object(panel_mod.config, "ROUTER", panel_mod.Path(__file__)),
+        patch.object(panel_mod.subprocess, "run", side_effect=RuntimeError(marker)),
+    ):
+        router = panel_mod._cworker_worker("codex-spark", "task", 5)
+    check("router error hides exception detail", marker not in router["error"], router["error"])
+
+    http_error = urllib.error.HTTPError(
+        panel_mod.OPENROUTER_URL,
+        429,
+        "rate limited",
+        hdrs=None,
+        fp=io.BytesIO(marker.encode()),
+    )
+    with (
+        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.object(panel_mod.urllib.request, "urlopen", side_effect=http_error),
+    ):
+        payg = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+    check("HTTP error reports status", "429" in payg["error"], payg["error"])
+    check("HTTP error hides body", marker not in payg["error"], payg["error"])
+    check("HTTP error is bounded", len(payg["error"]) <= 300, payg["error"])
+
+
+def test_http_worker_rejects_non_string_content() -> None:
+    response = {"choices": [{"message": {"content": [{"type": "text", "text": "x"}]}}]}
+    with (
+        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.object(
+            panel_mod.urllib.request,
+            "urlopen",
+            return_value=io.BytesIO(json.dumps(response).encode()),
+        ),
+    ):
+        result = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+    check("non-string HTTP content fails", result["success"] is False, str(result))
+    check("non-string HTTP content is malformed", result["error"] == "malformed response")
+
+
 # === judge feature ==========================================================
 
 
@@ -319,6 +444,53 @@ def test_judge_preserves_panel_when_all_tiers_fail() -> None:
     check("empty judge → evidence output", jd["panel_evidence"][0]["output"] == "panel answer")
 
 
+def test_judge_degrades_on_transport_exception() -> None:
+    def fail_transport(*_args, **_kwargs):
+        raise TimeoutError("SECRET_MARKER\n" + ("x" * 400))
+
+    panel = [
+        {"source": "x", "lane": "payg", "success": True, "output": "panel answer"}
+    ]
+    with patch("cheap_llm.cheap_complete", fail_transport):
+        jd = judge_mod.run_judge("task", panel, cloud_model="judge/model")
+    check("transport failure keeps five fields", all(k in jd for k in judge_mod.FUSION_FIELDS))
+    check("transport failure invalid", jd["judge_valid"] is False, str(jd))
+    check("transport failure reports requested model", jd["judge_model"] == "judge/model")
+    check("transport failure has zero cost", jd["cost"] == 0, str(jd))
+    check("transport failure has zero latency", jd["latency"] == 0, str(jd))
+    check("transport error names exception", "TimeoutError" in jd["error"], jd["error"])
+    check("transport error is bounded", len(jd["error"]) <= 300, str(len(jd["error"])))
+    check("transport error is single-line", "\n" not in jd["error"], jd["error"])
+    check("transport error hides exception detail", "SECRET_MARKER" not in jd["error"])
+    check("transport detail excluded from consensus", "TimeoutError" not in jd["consensus"])
+    check("panel output excluded from consensus", "panel answer" not in jd["consensus"])
+    evidence = jd["panel_evidence"]
+    check("transport failure keeps one evidence item", len(evidence) == 1, str(evidence))
+    check("transport failure keeps evidence source", evidence[0]["source"] == "x", str(evidence))
+    check("transport failure keeps evidence lane", evidence[0]["lane"] == "payg", str(evidence))
+    check(
+        "transport failure keeps evidence output",
+        evidence[0]["output"] == "panel answer" and evidence[0]["output_chars"] == 12,
+        str(evidence),
+    )
+
+
+def test_judge_does_not_swallow_base_exceptions() -> None:
+    panel = [{"source": "x", "lane": "payg", "output": "panel answer"}]
+    for error_type in (KeyboardInterrupt, SystemExit):
+        with patch("cheap_llm.cheap_complete", side_effect=error_type()):
+            caught: BaseException | None = None
+            try:
+                judge_mod.run_judge("task", panel)
+            except BaseException as exc:  # expected test boundary for process-control signals
+                caught = exc
+        check(
+            f"judge preserves {error_type.__name__}",
+            isinstance(caught, error_type),
+            repr(caught),
+        )
+
+
 def test_payg_model_ids_are_current_shape() -> None:
     deepseek = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("deepseek")]
     check("deepseek payg model present", len(deepseek) == 1, str(deepseek))
@@ -366,6 +538,24 @@ def test_run_lane_isolates_runner_exception() -> None:
         str(res),
     )
     check(
+        "run_lane records exception durations",
+        all(isinstance(r.get("duration_seconds"), float) for r in res),
+        str(res),
+    )
+
+
+def test_run_lane_isolates_non_dict_result() -> None:
+    def malformed_runner(worker, _task, _timeout):
+        if worker == "bad":
+            return None
+        return {"source": worker, "lane": "subscription", "success": True, "output": "ok"}
+
+    res = panel_mod._run_lane(["good", "bad"], malformed_runner, "task", 1)
+    by_source = {item["source"]: item for item in res}
+    check("non-dict keeps valid worker", by_source["good"]["success"] is True, str(res))
+    check("non-dict becomes failed worker", by_source["bad"]["success"] is False, str(res))
+    check("non-dict failure has duration", "duration_seconds" in by_source["bad"], str(res))
+    check(
         "run_lane records per-source duration",
         all(
             isinstance(r.get("duration_seconds"), float) and r["duration_seconds"] >= 0
@@ -375,7 +565,7 @@ def test_run_lane_isolates_runner_exception() -> None:
     )
 
 
-def test_judge_coerces_string_to_list() -> None:
+def test_judge_rejects_wrong_field_types() -> None:
     env = {
         "consensus": "c",
         "contradictions": "should be list",
@@ -385,7 +575,68 @@ def test_judge_coerces_string_to_list() -> None:
     }
     with patch("cheap_llm.cheap_complete", _fake_cheap_complete(env)):
         jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
-    check("string coerced", jd["contradictions"] == ["should be list"], str(jd["contradictions"]))
+    check("wrong field type invalid", jd["judge_valid"] is False, str(jd))
+    check("wrong field type preserves evidence", jd["panel_evidence"][0]["output"] == "y")
+
+
+def test_judge_degrades_on_non_dict_transport_result() -> None:
+    panel = [{"source": "x", "lane": "payg", "output": "signal"}]
+    for malformed in (None, [], "bad"):
+        with patch("cheap_llm.cheap_complete", return_value=malformed):
+            jd = judge_mod.run_judge("task", panel, cloud_model="judge/model")
+        check("non-dict judge result invalid", jd["judge_valid"] is False, str(jd))
+        check("non-dict judge keeps requested model", jd["judge_model"] == "judge/model")
+        check("non-dict judge keeps evidence", jd["panel_evidence"][0]["output"] == "signal")
+
+
+def test_judge_requires_exact_typed_schema() -> None:
+    valid = {
+        "consensus": "c",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+    malformed = [
+        {**valid, "extra": []},
+        {**valid, "consensus": 1},
+        {**valid, "contradictions": [1]},
+    ]
+    for envelope in malformed:
+        with patch("cheap_llm.cheap_complete", _fake_cheap_complete(envelope)):
+            jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
+        check("strict schema rejects malformed shape", jd["judge_valid"] is False, str(jd))
+
+    duplicate = '{"consensus":"a","consensus":"b","contradictions":[],"coverage_gaps":[],"unique_insights":[],"blind_spots":[]}'
+    with patch("cheap_llm.cheap_complete", _fake_cheap_complete({}, text=duplicate)):
+        jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
+    check("strict schema rejects duplicate keys", jd["judge_valid"] is False, str(jd))
+
+
+def test_judge_validates_inputs_before_transport() -> None:
+    calls: list[str] = []
+
+    def recorder(*_args, **_kwargs):
+        calls.append("judge")
+        return {}
+
+    cases = [
+        lambda: judge_mod.run_judge("", []),
+        lambda: judge_mod.run_judge("task", None),
+        lambda: judge_mod.run_judge("task", [None]),
+        lambda: judge_mod.run_judge("task", [], timeout=0),
+        lambda: judge_mod.run_judge("task", [], timeout=True),
+        lambda: judge_mod.run_judge("task", [], cloud_model=" "),
+    ]
+    with patch("cheap_llm.cheap_complete", recorder):
+        for invoke in cases:
+            raised = False
+            try:
+                invoke()
+            except ValueError:
+                raised = True
+            check("judge rejects invalid input", raised)
+    check("invalid judge input makes zero transport", calls == [], str(calls))
 
 
 def test_judge_empty_panel() -> None:
@@ -427,6 +678,59 @@ def test_fuse_integrates() -> None:
     check("fuse sources populated", len(out["sources"]) == 4)
     check("fuse preset echoed", out["preset"] == "subs")
     check("fuse latency set", isinstance(out["total_latency"], (int, float)))
+
+
+def test_fuse_preserves_metadata_on_judge_exception() -> None:
+    def fail_transport(*_args, **_kwargs):
+        raise TimeoutError("transport down")
+
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "panel signal",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", fail_transport),
+    ):
+        out = fuse("task", opts=FuseOptions(preset="cheap"))
+    check("fuse judge exception invalid", out["judge_valid"] is False, str(out))
+    check("fuse judge exception sources", len(out["sources"]) == 4, str(out["sources"]))
+    check("fuse judge exception preset", out["preset"] == "cheap", str(out))
+    check("fuse judge exception latency", isinstance(out["total_latency"], (int, float)))
+    check("fuse judge exception evidence", len(out["panel_evidence"]) == 4, str(out))
+
+
+def test_fuse_invalid_inputs_block_preflight() -> None:
+    calls: list[str] = []
+
+    def recorder():
+        calls.append("preflight")
+        return {"ok": True, "version": "test", "error": None}
+
+    cases = [
+        lambda: fuse(""),
+        lambda: fuse("task", opts="bad"),
+        lambda: fuse("task", opts=FuseOptions(preset="unknown")),
+        lambda: fuse("task", opts=FuseOptions(panel_timeout=0)),
+        lambda: fuse("task", opts=FuseOptions(judge_timeout=True)),
+        lambda: fuse("task", opts=FuseOptions(min_workers=0)),
+        lambda: fuse("task", opts=FuseOptions(cloud_model=" ")),
+        lambda: fuse("task", opts=FuseOptions(current_model=" ")),
+    ]
+    with patch.object(fcli, "preflight", recorder):
+        for invoke in cases:
+            raised = False
+            try:
+                invoke()
+            except ValueError:
+                raised = True
+            check("fuse rejects invalid input", raised)
+    check("invalid fuse input makes zero preflight", calls == [], str(calls))
 
 
 def test_fuse_echoes_current_model() -> None:
@@ -509,7 +813,15 @@ def test_cli_main_json() -> None:
 
 
 def test_cli_version_uses_distribution_name() -> None:
-    check("cli version from fusion-local dist", fcli.__version__ == version("fusion-local"))
+    expected = distribution_version("fusion-local")
+    check("package version from fusion-local dist", fusion.__version__ == expected)
+    check("cli version shares package version", fcli.__version__ == fusion.__version__)
+
+
+def test_version_source_fallback_is_honest() -> None:
+    with patch.object(version_mod, "version", side_effect=PackageNotFoundError):
+        resolved = version_mod.resolve_version()
+    check("source fallback is unknown", resolved == "0+unknown", resolved)
 
 
 def test_cli_capabilities_contract() -> None:
@@ -523,8 +835,19 @@ def test_cli_capabilities_contract() -> None:
     by_name = {item["name"]: item for item in payload["capabilities"]}
     check("capabilities exit 0", rc == 0, str(rc))
     check("capabilities schema", payload["schema_version"] == 1, str(payload))
+    check("capabilities canonical version", payload["version"] == fusion.__version__)
     check("fuse structured", by_name["fuse"]["structured_json"] is True, str(by_name["fuse"]))
     check("fuse read-only", by_name["fuse"]["read_only"] is True, str(by_name["fuse"]))
+    check("capabilities presets DRY", tuple(by_name["fuse"]["presets"]) == panel_mod.PANEL_PRESETS)
+    check(
+        "local JSON contract named",
+        by_name["fuse"]["output_contracts"]["json"] == "fusion-envelope-v1",
+    )
+    check(
+        "hosted raw JSON contract named",
+        by_name["openrouter"]["output_contracts"]["json"]
+        == "openrouter-chat-completion-v1",
+    )
     check(
         "health exposes cheap_llm",
         payload["health"]["cheap_llm_min_version"] == judge_mod.CHEAP_LLM_MIN_VERSION,
@@ -571,6 +894,51 @@ def test_cli_empty_prompt_errors() -> None:
     except SystemExit as exc:
         rc = exc.code
     check("empty prompt → non-zero exit", rc != 0 and rc is not None, str(rc))
+
+
+def test_cli_rejects_invalid_options_before_preflight() -> None:
+    calls: list[str] = []
+
+    def recorder():
+        calls.append("preflight")
+        return {"ok": True, "version": "test", "error": None}
+
+    argv_cases = [
+        ["fusion-local", "Q", "--panel-timeout", "0"],
+        ["fusion-local", "Q", "--judge-timeout", "-1"],
+        ["fusion-local", "Q", "--min-workers", "0"],
+        ["fusion-local", "Q", "--cloud-model", ""],
+        ["fusion-local", "Q", "--current-model", " "],
+    ]
+    with patch.object(fcli, "preflight", recorder):
+        for argv in argv_cases:
+            code = None
+            try:
+                with patch.object(sys, "argv", argv):
+                    fcli.main()
+            except SystemExit as exc:
+                code = exc.code
+            check("CLI invalid option exits 2", code == 2, str((argv, code)))
+    check("CLI invalid options make zero preflight", calls == [], str(calls))
+
+
+def test_openrouter_help_version_and_capabilities_routing() -> None:
+    for flag in ("--help", "--version"):
+        code = None
+        try:
+            with patch.object(sys, "argv", ["fusion", "--openrouter", flag]):
+                fcli.main()
+        except SystemExit as exc:
+            code = exc.code
+        check(f"hosted {flag} exits 0", code == 0, str(code))
+
+    code = None
+    try:
+        with patch.object(sys, "argv", ["fusion", "--openrouter", "--capabilities"]):
+            fcli.main()
+    except SystemExit as exc:
+        code = exc.code
+    check("hosted capabilities is invalid usage", code == 2, str(code))
 
 
 # === hardening: preflight / scrub / env override / health ==================
@@ -671,7 +1039,7 @@ def test_panel_subs_env_empty_disables_lane1() -> None:
 def test_capabilities_health_live() -> None:
     import fusion.capabilities as caps_mod
 
-    payload = caps_mod.capabilities_payload("test")
+    payload = caps_mod.capabilities_payload()
     health = payload["health"]
     check(
         "health min version DRY with judge",
@@ -709,11 +1077,41 @@ def test_cli_json_exit_reflects_judge_validity() -> None:
     check("json envelope still parseable", parsed["judge_valid"] is False)
 
 
+def test_cli_json_degrades_on_judge_exception() -> None:
+    def fail_transport(*_args, **_kwargs):
+        raise TimeoutError("transport down")
+
+    buf = io.StringIO()
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "panel signal",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", fail_transport),
+        patch.object(sys, "argv", ["fusion-local", "Q?", "--preset", "cheap", "--json"]),
+        patch.object(sys, "stdout", buf),
+    ):
+        rc = fcli.main()
+    parsed = json.loads(buf.getvalue())
+    check("judge exception CLI exits 2", rc == 2, str(rc))
+    check("judge exception CLI stays JSON", parsed["judge_valid"] is False, buf.getvalue())
+    check("judge exception CLI keeps evidence", len(parsed["panel_evidence"]) == 4, str(parsed))
+    check("judge exception CLI has no traceback", "Traceback" not in buf.getvalue())
+
+
 TESTS = [
     ("panel_payg_uses_lane2_only", test_panel_payg_uses_lane2_only),
     ("panel_subs_falls_back_to_payg", test_panel_subs_falls_back_to_payg),
     ("panel_cheap_uses_low_cost_models", test_panel_cheap_uses_low_cost_models),
     ("panel_ultra_uses_verified_frontier_models", test_panel_ultra_uses_verified_frontier_models),
+    ("panel_mixed_always_runs_both_lanes", test_panel_mixed_always_runs_both_lanes),
+    ("panel_invalid_inputs_block_dispatch", test_panel_invalid_inputs_block_dispatch),
     ("panel_excludes_current_payg_model", test_panel_excludes_current_payg_model),
     ("panel_excludes_current_subscription_model", test_panel_excludes_current_subscription_model),
     (
@@ -730,22 +1128,37 @@ TESTS = [
     ),
     ("panel_summarize", test_panel_summarize),
     ("cworker_router_unavailable", test_cworker_router_unavailable),
+    ("cworker_rejects_nonzero_exit_with_stdout", test_cworker_rejects_nonzero_exit_with_stdout),
+    ("cworker_accepts_zero_exit_with_stdout", test_cworker_accepts_zero_exit_with_stdout),
+    ("panel_public_errors_hide_untrusted_details", test_panel_public_errors_hide_untrusted_details),
+    ("http_worker_rejects_non_string_content", test_http_worker_rejects_non_string_content),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
     ("judge_rejects_missing_schema_fields", test_judge_rejects_missing_schema_fields),
     ("judge_accepts_empty_schema_arrays", test_judge_accepts_empty_schema_arrays),
     ("judge_preserves_panel_when_all_tiers_fail", test_judge_preserves_panel_when_all_tiers_fail),
+    ("judge_degrades_on_transport_exception", test_judge_degrades_on_transport_exception),
+    ("judge_does_not_swallow_base_exceptions", test_judge_does_not_swallow_base_exceptions),
     ("payg_model_ids_are_current_shape", test_payg_model_ids_are_current_shape),
     ("run_lane_isolates_runner_exception", test_run_lane_isolates_runner_exception),
-    ("judge_coerces_string_to_list", test_judge_coerces_string_to_list),
+    ("run_lane_isolates_non_dict_result", test_run_lane_isolates_non_dict_result),
+    ("judge_rejects_wrong_field_types", test_judge_rejects_wrong_field_types),
+    ("judge_degrades_on_non_dict_transport_result", test_judge_degrades_on_non_dict_transport_result),
+    ("judge_requires_exact_typed_schema", test_judge_requires_exact_typed_schema),
+    ("judge_validates_inputs_before_transport", test_judge_validates_inputs_before_transport),
     ("judge_empty_panel", test_judge_empty_panel),
     ("fuse_integrates", test_fuse_integrates),
+    ("fuse_preserves_metadata_on_judge_exception", test_fuse_preserves_metadata_on_judge_exception),
+    ("fuse_invalid_inputs_block_preflight", test_fuse_invalid_inputs_block_preflight),
     ("fuse_echoes_current_model", test_fuse_echoes_current_model),
     ("cli_main_json", test_cli_main_json),
     ("cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),
+    ("version_source_fallback_is_honest", test_version_source_fallback_is_honest),
     ("cli_capabilities_contract", test_cli_capabilities_contract),
     ("cli_main_readable", test_cli_main_readable),
     ("cli_empty_prompt_errors", test_cli_empty_prompt_errors),
+    ("cli_rejects_invalid_options_before_preflight", test_cli_rejects_invalid_options_before_preflight),
+    ("openrouter_help_version_and_capabilities_routing", test_openrouter_help_version_and_capabilities_routing),
     ("fuse_preflight_blocks_panel_spend", test_fuse_preflight_blocks_panel_spend),
     ("judge_degrades_when_transport_drifts", test_judge_degrades_when_transport_drifts),
     ("judge_preflight_ok_against_installed", test_judge_preflight_ok_against_installed),
@@ -754,6 +1167,7 @@ TESTS = [
     ("panel_subs_env_empty_disables_lane1", test_panel_subs_env_empty_disables_lane1),
     ("capabilities_health_live", test_capabilities_health_live),
     ("cli_json_exit_reflects_judge_validity", test_cli_json_exit_reflects_judge_validity),
+    ("cli_json_degrades_on_judge_exception", test_cli_json_degrades_on_judge_exception),
 ]
 
 

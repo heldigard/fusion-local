@@ -6,17 +6,18 @@ import os
 from typing import Any
 
 from . import config
+from ._version import __version__
 from .judge import CHEAP_LLM_MIN_VERSION, preflight
-from .panel import CURRENT_MODEL_ENV_KEYS, PANEL_SUBS_ENV
+from .panel import CURRENT_MODEL_ENV_KEYS, PANEL_PRESETS, PANEL_SUBS_ENV
 
 
-def capabilities_payload(version: str) -> dict[str, Any]:
+def capabilities_payload() -> dict[str, Any]:
     """Return the stable capability manifest for orchestration consumers."""
     return {
         "command": "capabilities",
         "schema_version": 1,
         "tool": "fusion-local",
-        "version": version,
+        "version": __version__,
         "capabilities": _capability_entries(),
         "health": _health_payload(),
     }
@@ -27,12 +28,30 @@ def _capability_entries() -> list[dict[str, Any]]:
     openrouter_purpose = (
         "Delegate to the legacy hosted OpenRouter fusion path when explicitly requested."
     )
-    fuse_presets = ("subs", "payg", "cheap", "ultra", "mixed")
     caps_purpose = "Emit this local fusion capability manifest."
     return [
-        _cap("fuse", fuse_purpose, presets=fuse_presets),
-        _cap("capabilities", caps_purpose, idempotent=True, open_world=False, cost="cheap"),
-        _cap("openrouter", openrouter_purpose),
+        _cap(
+            "fuse",
+            fuse_purpose,
+            presets=PANEL_PRESETS,
+            output_contracts={"default": "fusion-readable-v1", "json": "fusion-envelope-v1"},
+        ),
+        _cap(
+            "capabilities",
+            caps_purpose,
+            idempotent=True,
+            open_world=False,
+            cost="cheap",
+            output_contracts={"default": "capabilities-v1", "json": "capabilities-v1"},
+        ),
+        _cap(
+            "openrouter",
+            openrouter_purpose,
+            output_contracts={
+                "default": "openrouter-assistant-text",
+                "json": "openrouter-chat-completion-v1",
+            },
+        ),
     ]
 
 
@@ -50,6 +69,7 @@ def _cap(name: str, purpose: str, **overrides: Any) -> dict[str, Any]:
         "idempotent": False,
         "open_world": True,
         "structured_json": True,
+        "output_contracts": {},
         "presets": (),
         "cost": "variable",
     }

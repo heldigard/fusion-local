@@ -14,16 +14,16 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ._boundary import (
+    nonempty_arg,
+    positive_int_arg,
+    require_nonempty_string,
+    require_positive_int,
+)
+from ._version import __version__
 from .capabilities import capabilities_payload
 from .judge import DEFAULT_JUDGE_MODEL, empty_fields, preflight, run_judge
-from .panel import detect_current_model, run_panel
-
-try:  # version from installed metadata; fallback for editable/source runs
-    from importlib.metadata import version as _pkg_version
-
-    __version__ = _pkg_version("fusion-local")
-except Exception:  # noqa: BLE001
-    __version__ = "1.0.0"
+from .panel import PANEL_PRESETS, detect_current_model, run_panel
 
 
 @dataclass
@@ -40,7 +40,17 @@ class FuseOptions:
 
 def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     """Full fusion: panel → judge → 5-field envelope with sources metadata."""
+    require_nonempty_string("task", task)
+    if opts is not None and not isinstance(opts, FuseOptions):
+        raise ValueError("opts must be a FuseOptions instance")
     o = opts or FuseOptions()
+    if o.preset not in PANEL_PRESETS:
+        raise ValueError(f"preset must be one of: {', '.join(PANEL_PRESETS)}")
+    require_nonempty_string("cloud_model", o.cloud_model, optional=True)
+    require_nonempty_string("current_model", o.current_model, optional=True)
+    require_positive_int("panel_timeout", o.panel_timeout)
+    require_positive_int("judge_timeout", o.judge_timeout)
+    require_positive_int("min_workers", o.min_workers)
     t0 = time.perf_counter()
     # Judge-transport preflight BEFORE the panel: a missing/drifted cheap_llm
     # must fail before PAYG/subscription spend, not after the panel already ran.
@@ -108,25 +118,31 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"fusion-local {__version__}")
     parser.add_argument(
         "--preset",
-        choices=["subs", "payg", "cheap", "ultra", "mixed"],
+        choices=PANEL_PRESETS,
         default="subs",
         help="Panel source: subs ($0 subs workers, default), payg, cheap, ultra, mixed.",
     )
     parser.add_argument(
         "--cloud-model",
+        type=nonempty_arg,
         default=DEFAULT_JUDGE_MODEL,
         help=f"Judge model (default: {DEFAULT_JUDGE_MODEL}).",
     )
-    parser.add_argument("--panel-timeout", type=int, default=60, help="Per-panelist timeout (s).")
-    parser.add_argument("--judge-timeout", type=int, default=30, help="Judge call timeout (s).")
+    parser.add_argument(
+        "--panel-timeout", type=positive_int_arg, default=60, help="Per-panelist timeout (s)."
+    )
+    parser.add_argument(
+        "--judge-timeout", type=positive_int_arg, default=30, help="Judge call timeout (s)."
+    )
     parser.add_argument(
         "--min-workers",
-        type=int,
+        type=positive_int_arg,
         default=2,
         help="Min successful panelists before skipping PAYG fallback.",
     )
     parser.add_argument(
         "--current-model",
+        type=nonempty_arg,
         help="Controller model to exclude from the panel (also detected from env when omitted).",
     )
     parser.add_argument(
@@ -186,22 +202,25 @@ def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
     if args.capabilities:
-        print(json.dumps(capabilities_payload(__version__), indent=2, ensure_ascii=False))
+        print(json.dumps(capabilities_payload(), indent=2, ensure_ascii=False))
         return 0
     if not (args.prompt or "").strip():
         parser.error("prompt must not be empty")
 
-    envelope = fuse(
-        args.prompt,
-        opts=FuseOptions(
-            preset=args.preset,
-            cloud_model=args.cloud_model,
-            panel_timeout=args.panel_timeout,
-            judge_timeout=args.judge_timeout,
-            min_workers=args.min_workers,
-            current_model=args.current_model,
-        ),
-    )
+    try:
+        envelope = fuse(
+            args.prompt,
+            opts=FuseOptions(
+                preset=args.preset,
+                cloud_model=args.cloud_model,
+                panel_timeout=args.panel_timeout,
+                judge_timeout=args.judge_timeout,
+                min_workers=args.min_workers,
+                current_model=args.current_model,
+            ),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.json:
         print(json.dumps(envelope, indent=2, ensure_ascii=False))

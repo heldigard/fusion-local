@@ -75,20 +75,20 @@ def test_build_payload_junk_panel_omitted() -> None:
     check("junk panel → analysis_models omitted", "analysis_models" not in p["plugins"][0])
 
 
-def test_require_key_missing_exits() -> None:
+def test_require_key_missing_fails() -> None:
     import os
 
     saved = os.environ.pop("OPENROUTER_API_KEY", None)
     try:
         try:
             delegate._require_key()
-        except SystemExit as exc:
-            check("missing key → exit 1", exc.code == 1, str(exc.code))
+        except delegate.DelegateFailure as exc:
+            check("missing key → code 1", exc.exit_code == 1, str(exc.exit_code))
             return
     finally:
         if saved is not None:
             os.environ["OPENROUTER_API_KEY"] = saved
-    check("missing key raised SystemExit", False, "no SystemExit")
+    check("missing key raised DelegateFailure", False, "no DelegateFailure")
 
 
 def test_judge_schema_has_five_fields() -> None:
@@ -100,7 +100,7 @@ TESTS = [
     ("build_payload_defaults", test_build_payload_defaults),
     ("build_payload_panel_override", test_build_payload_panel_override),
     ("build_payload_junk_panel_omitted", test_build_payload_junk_panel_omitted),
-    ("require_key_missing_exits", test_require_key_missing_exits),
+    ("require_key_missing_fails", test_require_key_missing_fails),
     ("judge_schema_has_five_fields", test_judge_schema_has_five_fields),
 ]
 
