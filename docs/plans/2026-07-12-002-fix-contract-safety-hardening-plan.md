@@ -1,7 +1,7 @@
 ---
 title: "fix: Complete contract safety hardening"
 type: fix
-status: active
+status: completed
 date: 2026-07-12
 ---
 
@@ -9,9 +9,9 @@ date: 2026-07-12
 
 ## Enhancement Summary
 
-**Deepened on:** 2026-07-12  
+**Deepened on:** 2026-07-12
 **Sections enhanced:** validation ownership, external errors, judge schema, hosted output,
-version imports, capabilities, and test strategy.  
+version imports, capabilities, and test strategy.
 **Research applied:** repository archaeology, SpecFlow, `python-pro`,
 `software-development`, and current official OpenRouter Fusion documentation.
 
@@ -174,28 +174,28 @@ third-party API without the local `fuse()` preflight.
 
 ## Acceptance Criteria
 
-- [ ] Invalid task/preset/numeric inputs fail before any external dispatch.
-- [ ] API entry points raise `ValueError`; CLI entry points use argparse exit 2.
-- [ ] `FuseOptions`, `panel_results`, model-string options, strict integers, and bool
+- [x] Invalid task/preset/numeric inputs fail before any external dispatch.
+- [x] API entry points raise `ValueError`; CLI entry points use argparse exit 2.
+- [x] `FuseOptions`, `panel_results`, model-string options, strict integers, and bool
       edge cases follow the documented validation matrix.
-- [ ] `mixed` dispatches subscription and PAYG lanes even when subscription workers meet
+- [x] `mixed` dispatches subscription and PAYG lanes even when subscription workers meet
       `min_workers`, while current-model exclusions remain effective.
-- [ ] Non-dict worker returns become failed sources; other workers complete.
-- [ ] Non-dict judge results and malformed strict schemas degrade with evidence, never
+- [x] Non-dict worker returns become failed sources; other workers complete.
+- [x] Non-dict judge results and malformed strict schemas degrade with evidence, never
       traceback or coercion.
-- [ ] All public panel/judge/delegate errors are single-line and at most 300 characters.
-- [ ] Public errors never contain injected secret markers from exception messages,
+- [x] All public panel/judge/delegate errors are single-line and at most 300 characters.
+- [x] Public errors never contain injected secret markers from exception messages,
       stderr, provider bodies, prompts, headers, or malformed return representations.
-- [ ] Hosted prompts are scrubbed before HTTP; missing key or scrub failure makes zero
+- [x] Hosted prompts are scrubbed before HTTP; missing key or scrub failure makes zero
       network calls.
-- [ ] Hosted HTTP/network/timeout/invalid JSON/provider-error/malformed-success paths
+- [x] Hosted HTTP/network/timeout/invalid JSON/provider-error/malformed-success paths
       return exit 2, bounded stderr, empty stdout, and no traceback.
-- [ ] Hosted success returns only assistant text or raw provider JSON according to flag.
-- [ ] Package, both CLIs, and capabilities report the same canonical version.
-- [ ] Capabilities reuse panel presets and distinguish local envelope from hosted output.
-- [ ] README and CLAUDE document costs, output formats, validation, and exit codes truthfully.
-- [ ] New tests are registered in both pytest discovery and manual runners.
-- [ ] `pytest -q`, both manual runners, Ruff, compileall, `git diff --check`, CLI smoke
+- [x] Hosted success returns only assistant text or raw provider JSON according to flag.
+- [x] Package, both CLIs, and capabilities report the same canonical version.
+- [x] Capabilities reuse panel presets and distinguish local envelope from hosted output.
+- [x] README and CLAUDE document costs, output formats, validation, and exit codes truthfully.
+- [x] New tests are registered in both pytest discovery and manual runners.
+- [x] `pytest -q`, both manual runners, Ruff, compileall, `git diff --check`, CLI smoke
       checks, and `codescan all` pass with no findings.
 
 ## Risks and Mitigations

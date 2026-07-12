@@ -172,7 +172,7 @@ def run_judge(
             error="judge output not valid JSON",
             panel_evidence=_panel_evidence(panel_results),
         )
-    if not (res.get("fields_ok") and _has_fusion_schema(parsed)):
+    if not (res.get("fields_ok") is True and _has_fusion_schema(parsed)):
         return empty_fields(
             consensus="Judge returned JSON that failed the required fusion schema; use panel_evidence for raw model signal.",
             judge_model=res.get("model"),
@@ -196,7 +196,7 @@ def run_judge(
 
 def _parse_judge_json(res: dict[str, Any]) -> dict[str, Any] | None:
     """Extract a dict from the cheap_complete result, or None on failure."""
-    if not (res.get("json_valid") and res.get("text")):
+    if not (res.get("json_valid") is True and res.get("text")):
         return None
     try:
         return json.loads(res["text"], object_pairs_hook=_unique_object)

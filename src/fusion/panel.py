@@ -355,13 +355,20 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
                 "success": False,
                 "error": "payg response too large",
             }
-        result = json.loads(raw.decode("utf-8", errors="replace"))
+        result = json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return {
             "source": alias,
             "lane": "payg",
             "success": False,
             "error": public_error("payg HTTP error", exc.code),
+        }
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return {
+            "source": alias,
+            "lane": "payg",
+            "success": False,
+            "error": "malformed response",
         }
     except Exception as exc:  # noqa: BLE001
         return {

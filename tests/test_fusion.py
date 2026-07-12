@@ -388,6 +388,17 @@ def test_http_worker_rejects_oversized_response() -> None:
     check("oversized PAYG response is stable", result["error"] == "payg response too large")
 
 
+def test_http_worker_rejects_invalid_utf8() -> None:
+    raw = b'{"choices":[{"message":{"content":"\xff"}}]}'
+    with (
+        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.object(panel_mod.urllib.request, "urlopen", return_value=io.BytesIO(raw)),
+    ):
+        result = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+    check("invalid UTF-8 PAYG response fails", result["success"] is False, str(result))
+    check("invalid UTF-8 is malformed", result["error"] == "malformed response", str(result))
+
+
 # === judge feature ==========================================================
 
 
@@ -646,6 +657,32 @@ def test_judge_requires_exact_typed_schema() -> None:
     with patch("cheap_llm.cheap_complete", _fake_cheap_complete({}, text=duplicate)):
         jd = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
     check("strict schema rejects duplicate keys", jd["judge_valid"] is False, str(jd))
+
+
+def test_judge_requires_exact_boolean_transport_flags() -> None:
+    envelope = {
+        "consensus": "c",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+    for field in ("json_valid", "fields_ok"):
+        for malformed in ("false", 1, [True], {"value": True}, False):
+            result: dict[str, Any] = {
+                "text": json.dumps(envelope),
+                "model": "judge/model",
+                "json_valid": True,
+                "fields_ok": True,
+                field: malformed,
+            }
+            with patch("cheap_llm.cheap_complete", return_value=result):
+                judged = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
+            check(
+                f"judge rejects non-true {field}",
+                judged["judge_valid"] is False,
+                str((field, malformed, judged)),
+            )
 
 
 def test_judge_validates_inputs_before_transport() -> None:
@@ -1203,6 +1240,7 @@ TESTS = [
     ("panel_public_errors_hide_untrusted_details", test_panel_public_errors_hide_untrusted_details),
     ("http_worker_rejects_non_string_content", test_http_worker_rejects_non_string_content),
     ("http_worker_rejects_oversized_response", test_http_worker_rejects_oversized_response),
+    ("http_worker_rejects_invalid_utf8", test_http_worker_rejects_invalid_utf8),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
     ("judge_rejects_missing_schema_fields", test_judge_rejects_missing_schema_fields),
@@ -1219,6 +1257,10 @@ TESTS = [
         test_judge_degrades_on_non_dict_transport_result,
     ),
     ("judge_requires_exact_typed_schema", test_judge_requires_exact_typed_schema),
+    (
+        "judge_requires_exact_boolean_transport_flags",
+        test_judge_requires_exact_boolean_transport_flags,
+    ),
     ("judge_validates_inputs_before_transport", test_judge_validates_inputs_before_transport),
     ("judge_empty_panel", test_judge_empty_panel),
     ("fuse_integrates", test_fuse_integrates),
