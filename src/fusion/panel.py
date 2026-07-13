@@ -1,19 +1,19 @@
-# vs-soft-allow — single-responsibility panel orchestrator: lane runners take
-# the full fan-out context as kwargs; splitting per-lane files would scatter
-# one cohesive flow.
 """Panel feature — gather N diverse model responses (lanes + orchestration).
 
 Lane 1 ($0 subs): cworker router → codex-spark/agy35-flash/kimic/zai (Claude
 ecosystem). Lane 2 (PAYG, universal cross-CLI): HTTP direct to OpenRouter. The
 orchestration runs lane 1, falls back to lane 2 when fewer than ``min_workers``
 succeed.
+
+The model catalog (``panel_models``) and current-controller-model detection
+(``panel_current``) live in sibling modules; this module re-exports their
+public names so ``from fusion.panel import X`` keeps working.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import tempfile
 import time
@@ -21,8 +21,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from typing import Any, TypeVar
+from pathlib import Path  # noqa: F401 — re-exported (tests reach panel_mod.Path)
+from typing import Any
 
 from . import config
 from ._boundary import (
@@ -32,234 +32,33 @@ from ._boundary import (
     require_positive_int,
     scrub_external_text,
 )
-
-# Type alias for a lane-2 entry: (alias, url, model_name, api_key_env).
-Spec = tuple[str, str, str, str]
-Worker = str | Spec
-LaneWorker = TypeVar("LaneWorker", str, Spec)
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
-
-# Lane 1: $0 subscription workers, diverse families. Routed via config.ROUTER
-# (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm).
-PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
-
-# Cross-CLI override for lane-1 (mirrors FUSION_ROUTER semantics):
-# unset → PANEL_SUBS default; "" → disable lane-1; "a,b" → custom worker modes.
-PANEL_SUBS_ENV = "FUSION_PANEL_SUBS"
-
-# Lane 2: PAYG fallback (HTTP direct, OpenRouter) — universal cross-CLI. PAYG
-# stays strong but economical; cheap/intelligence/ultra presets are explicit so
-# the controller can pick cost vs depth intentionally. Cost tiers (output $/M):
-#   cheap       ~$0.15-1.28  — economical open models
-#   payg        ~$0.87-3.75  — open capable (default deliberation)
-#   intelligence ~$6-15      — frontier-accessible, NO premium $25-50/M seats
-#   ultra        ~$6-50      — full frontier incl. premium closed (fable/sol-pro/opus)
-PANEL_PAYG: list[tuple[str, str, str, str]] = [
-    ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
-    ("qwen3.7-max", OPENROUTER_URL, "qwen/qwen3.7-max", OPENROUTER_KEY_ENV),
-]
-
-PANEL_CHEAP: list[tuple[str, str, str, str]] = [
-    ("deepseek-v4-flash", OPENROUTER_URL, "deepseek/deepseek-v4-flash", OPENROUTER_KEY_ENV),
-    ("qwen3.7-plus", OPENROUTER_URL, "qwen/qwen3.7-plus", OPENROUTER_KEY_ENV),
-    ("minimax-m3", OPENROUTER_URL, "minimax/minimax-m3", OPENROUTER_KEY_ENV),
-    ("mimo-v2.5-pro", OPENROUTER_URL, "xiaomi/mimo-v2.5-pro", OPENROUTER_KEY_ENV),
-]
-
-PANEL_ULTRA: list[tuple[str, str, str, str]] = [
-    ("claude-fable-5", OPENROUTER_URL, "anthropic/claude-fable-5", OPENROUTER_KEY_ENV),
-    ("claude-opus-4.8", OPENROUTER_URL, "anthropic/claude-opus-4.8", OPENROUTER_KEY_ENV),
-    ("gpt-5.6-sol-pro", OPENROUTER_URL, "openai/gpt-5.6-sol-pro", OPENROUTER_KEY_ENV),
-    ("gemini-pro-latest", OPENROUTER_URL, "~google/gemini-pro-latest", OPENROUTER_KEY_ENV),
-    ("grok-4.5", OPENROUTER_URL, "x-ai/grok-4.5", OPENROUTER_KEY_ENV),
-]
-
-# Intelligence: frontier-accessible panel for medium-high complexity. 4 families
-# (xAI, Google, OpenAI, DeepSeek), all frontier/open-capable, deliberately
-# EXCLUDING the premium closed seats (claude-fable-5 $50, gpt-5.6-sol-pro $30,
-# claude-opus-4.8 $25 per M output) that ultra reserves for high-stakes work.
-# Roughly 5x cheaper than ultra per deliberation while keeping 2 frontier voices.
-PANEL_INTELLIGENCE: list[tuple[str, str, str, str]] = [
-    ("grok-4.5", OPENROUTER_URL, "x-ai/grok-4.5", OPENROUTER_KEY_ENV),
-    ("gemini-pro-latest", OPENROUTER_URL, "~google/gemini-pro-latest", OPENROUTER_KEY_ENV),
-    ("gpt-5.6-terra", OPENROUTER_URL, "openai/gpt-5.6-terra", OPENROUTER_KEY_ENV),
-    ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
-]
-
-PAYG_PRESETS: dict[str, list[Spec]] = {
-    "payg": PANEL_PAYG,
-    "cheap": PANEL_CHEAP,
-    "intelligence": PANEL_INTELLIGENCE,
-    "ultra": PANEL_ULTRA,
-}
-
-PANEL_PRESETS: tuple[str, ...] = ("subs", "payg", "cheap", "intelligence", "ultra", "mixed")
-
-SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
-    "codex-spark": ("gpt-5.6-terra", "openai/gpt-5.6-terra"),
-    "agy35-flash": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
-    "kimic": ("kimi-k2.7-code", "moonshotai/kimi-k2.7-code"),
-    "zai": ("glm-5.2", "z-ai/glm-5.2"),
-}
-
-MODEL_ALIASES: dict[str, tuple[str, ...]] = {
-    "~google/gemini-pro-latest": (
-        "google/gemini-pro-latest",
-        "gemini-pro-latest",
-    ),
-    "anthropic/claude-opus-4.8": ("claude-opus-4-8", "claude-opus-4.8", "opus"),
-    "anthropic/claude-fable-5": ("claude-fable-5", "fable", "default"),
-    "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol"),
-    "x-ai/grok-4.5": ("grok-4.5", "grok-4-5", "grok-4.5-20260708"),
-    "deepseek/deepseek-v4-pro": ("deepseek-v4-pro",),
-    "deepseek/deepseek-v4-flash": ("deepseek-v4-flash",),
-    "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max"),
-    "qwen/qwen3.7-plus": ("qwen3.7-plus", "qwen/qwen3.7-plus"),
-    "minimax/minimax-m3": ("minimax-m3", "minimax-3"),
-    "xiaomi/mimo-v2.5-pro": ("mimo-v2.5-pro", "mimo-2.5-pro"),
-}
-
-CURRENT_MODEL_ENV_KEYS = (
-    "FUSION_CURRENT_MODEL",
-    "CONTROLLER_MODEL",
-    "CODEX_MODEL",
-    "ANTHROPIC_MODEL",
-    "GEMINI_MODEL",
-    "QWEN_MODEL",
+from .panel_current import (  # noqa: F401 — re-exported (capabilities/tests)
+    CURRENT_MODEL_ENV_KEYS,
+    _matches_current_model,
+    _without_current_model,
+    detect_current_model,
 )
-
-# Recursion guard — panelists answer directly, no tools / no delegation.
-WORKER_GUARD = (
-    "[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]\n"
-    "You are a deliberation panelist. Give your direct, reasoned answer to the TASK. "
-    "Do NOT use tools, APIs, or further delegation. Text answer only.\n\nTASK:\n"
+from .panel_models import (  # noqa: F401 — re-exported (public/test surface)
+    MODEL_ALIASES,
+    OPENROUTER_KEY_ENV,
+    OPENROUTER_URL,
+    PANEL_CHEAP,
+    PANEL_INTELLIGENCE,
+    PANEL_PAYG,
+    PANEL_PRESETS,
+    PANEL_SUBS,
+    PANEL_SUBS_ENV,
+    PANEL_ULTRA,
+    PAYG_PRESETS,
+    SUBS_WORKER_MODELS,
+    WORKER_GUARD,
+    LaneWorker,
+    Spec,
 )
-
-
-def detect_current_model(explicit: str | None = None) -> str | None:
-    """Best-effort current controller model for panel de-duplication."""
-    if explicit and explicit.strip():
-        return explicit.strip()
-    identity = os.environ.get("CLAUDE_AGENT_IDENTITY", "").strip()
-    if identity:
-        model = _identity_model(identity)
-        if model:
-            return model
-    for key in CURRENT_MODEL_ENV_KEYS:
-        model = os.environ.get(key, "").strip()
-        if model:
-            return model
-    # Inside a live Claude Code session none of the identity envs is exported;
-    # settings.json holds the pinned controller model (e.g. claude-fable-5[1m]).
-    # Without this fallback the ultra preset can seat the controller's own
-    # model on the panel (echo-chamber seat).
-    if os.environ.get("CLAUDECODE", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return _claude_settings_model()
-    return None
-
-
-def _claude_settings_model() -> str | None:
-    settings = Path.home() / ".claude" / "settings.json"
-    try:
-        model = str(json.loads(settings.read_text(encoding="utf-8")).get("model") or "")
-    except (OSError, json.JSONDecodeError):
-        return None
-    return model.strip() or None
-
-
-def _identity_model(identity: str) -> str | None:
-    try:
-        payload = json.loads(identity)
-    except json.JSONDecodeError:
-        return _colon_identity_model(identity)
-    if isinstance(payload, dict):
-        model = payload.get("model")
-        return model.strip() or None if isinstance(model, str) else None
-    return _colon_identity_model(str(payload))
-
-
-def _colon_identity_model(identity: str) -> str | None:
-    parts = identity.split(":")
-    if len(parts) >= 2 and parts[1].strip():
-        return parts[1].strip()
-    return None
-
-
-def _normalize_name(value: str) -> str:
-    # Bracketed terminal context-window suffixes are not part of a model id.
-    normalized = value.strip().lower().lstrip("~")
-    return re.sub(r"\[[^\]]+\]$", "", normalized)
-
-
-def _model_key(value: str) -> str:
-    return "".join(ch for ch in _normalize_name(value) if ch.isalnum())
-
-
-def _candidate_keys(names: Sequence[str]) -> set[str]:
-    keys: set[str] = set()
-    for name in names:
-        if not name:
-            continue
-        keys.add(_model_key(name))
-        for alias in MODEL_ALIASES.get(name, ()):
-            keys.add(_model_key(alias))
-        normalized = name.strip().lower().lstrip("~")
-        for model, aliases in MODEL_ALIASES.items():
-            if normalized == model.lstrip("~") or normalized in aliases:
-                keys.add(_model_key(model))
-                keys.update(_model_key(alias) for alias in aliases)
-    return keys
-
-
-def _worker_model_names(worker: Worker) -> tuple[str, ...]:
-    if isinstance(worker, tuple):
-        alias, _url, model, _key_env = worker
-        return (alias, model)
-    return (str(worker), *SUBS_WORKER_MODELS.get(str(worker), ()))
-
-
-def _matches_current_model(worker: Worker, current_model: str | None) -> bool:
-    if not current_model:
-        return False
-    current_keys = _candidate_keys((current_model,))
-    worker_keys = _candidate_keys(_worker_model_names(worker))
-    return bool(current_keys & worker_keys)
-
-
-def _skip_current_result(worker: Worker, current_model: str) -> dict[str, Any]:
-    if isinstance(worker, tuple):
-        source = worker[0]
-        lane = "payg"
-    else:
-        source = str(worker)
-        lane = "subscription"
-    return {
-        "source": source,
-        "lane": lane,
-        "success": False,
-        "skipped": True,
-        "error": "skipped current controller model",
-    }
-
-
-def _without_current_model(
-    workers: Sequence[LaneWorker], current_model: str | None
-) -> tuple[list[LaneWorker], list[dict[str, Any]]]:
-    if not current_model:
-        return list(workers), []
-    selected: list[LaneWorker] = []
-    skipped: list[dict[str, Any]] = []
-    for worker in workers:
-        if _matches_current_model(worker, current_model):
-            skipped.append(_skip_current_result(worker, current_model))
-        else:
-            selected.append(worker)
-    return selected, skipped
 
 
 def _payg_panel_for_preset(preset: str) -> list[Spec]:
-    if preset == "subs":
+    if preset in ("subs", "mixed"):
         return PANEL_PAYG
     return PAYG_PRESETS[preset]
 
@@ -286,57 +85,32 @@ def _scrub(text: str) -> str:
 # --- Lane 1: cworker subprocess ($0 subscription workers) -------------------
 
 
-def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
-    """Run one subscription worker via the codex-worker-router CLI (stdin prompt)."""
-    if config.ROUTER is None or not config.ROUTER.exists():
-        return {
-            "source": mode,
-            "lane": "subscription",
-            "success": False,
-            "error": "router unavailable (set FUSION_ROUTER or rely on lane-2)",
-        }
-    guarded = WORKER_GUARD + task
-    try:
-        # The versioned protocol makes stdout answer-only and disables the
-        # router's own PAYG fallback. Fusion exclusively owns lane-2/cost policy.
-        command = [
-            "python3",
-            str(config.ROUTER),
-            "--mode",
-            mode,
-            "--timeout",
-            str(timeout),
-            "--protocol",
-            "fusion-panel-v1",
-        ]
-        # Do not use capture_output: a misbehaving router could otherwise fill
-        # memory before Fusion gets a chance to enforce its response limit.
-        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-            proc = subprocess.run(
-                command,
-                input=guarded.encode("utf-8"),
-                stdout=stdout_file,
-                stderr=stderr_file,
-                timeout=timeout + 15,
-            )
-            stdout_file.seek(0)
-            raw_stdout = stdout_file.read(MAX_EXTERNAL_RESPONSE_BYTES + 1)
-    except subprocess.TimeoutExpired:
-        return {"source": mode, "lane": "subscription", "success": False, "error": "timeout"}
-    except FileNotFoundError as exc:
-        return {
-            "source": mode,
-            "lane": "subscription",
-            "success": False,
-            "error": public_error("router missing", type(exc).__name__),
-        }
-    except Exception as exc:  # noqa: BLE001 — panel must not abort on one worker
-        return {
-            "source": mode,
-            "lane": "subscription",
-            "success": False,
-            "error": public_error("router failure", type(exc).__name__),
-        }
+def _cworker_build_command(mode: str, timeout: int) -> list[str]:
+    """Router argv with the versioned fusion-panel-v1 protocol.
+
+    The protocol makes stdout answer-only and disables the router's own PAYG
+    fallback — Fusion exclusively owns lane-2/cost policy.
+    """
+    return [
+        "python3",
+        str(config.ROUTER),
+        "--mode",
+        mode,
+        "--timeout",
+        str(timeout),
+        "--protocol",
+        "fusion-panel-v1",
+    ]
+
+
+def _cworker_parse(
+    proc: subprocess.CompletedProcess[Any], raw_stdout: bytes, mode: str
+) -> dict[str, Any]:
+    """Reduce a router process + captured stdout to a panel result dict.
+
+    Prefers ``proc.stdout`` (set by test mocks) over the tempfile capture, so a
+    mocked ``subprocess.run`` returning a ``CompletedProcess`` still works.
+    """
     mocked_stdout = getattr(proc, "stdout", None)
     if isinstance(mocked_stdout, str):
         raw_stdout = mocked_stdout.encode("utf-8")
@@ -373,6 +147,49 @@ def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
         "success": False,
         "error": "router returned empty output",
     }
+
+
+def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
+    """Run one subscription worker via the codex-worker-router CLI (stdin prompt)."""
+    if config.ROUTER is None or not config.ROUTER.exists():
+        return {
+            "source": mode,
+            "lane": "subscription",
+            "success": False,
+            "error": "router unavailable (set FUSION_ROUTER or rely on lane-2)",
+        }
+    guarded = WORKER_GUARD + task
+    command = _cworker_build_command(mode, timeout)
+    try:
+        # Do not use capture_output: a misbehaving router could otherwise fill
+        # memory before Fusion gets a chance to enforce its response limit.
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            proc = subprocess.run(
+                command,
+                input=guarded.encode("utf-8"),
+                stdout=stdout_file,
+                stderr=stderr_file,
+                timeout=timeout + 15,
+            )
+            stdout_file.seek(0)
+            raw_stdout = stdout_file.read(MAX_EXTERNAL_RESPONSE_BYTES + 1)
+    except subprocess.TimeoutExpired:
+        return {"source": mode, "lane": "subscription", "success": False, "error": "timeout"}
+    except FileNotFoundError as exc:
+        return {
+            "source": mode,
+            "lane": "subscription",
+            "success": False,
+            "error": public_error("router missing", type(exc).__name__),
+        }
+    except Exception as exc:  # noqa: BLE001 — panel must not abort on one worker
+        return {
+            "source": mode,
+            "lane": "subscription",
+            "success": False,
+            "error": public_error("router failure", type(exc).__name__),
+        }
+    return _cworker_parse(proc, raw_stdout, mode)
 
 
 # --- Lane 2: HTTP direct (PAYG, universal cross-CLI) ------------------------
@@ -434,30 +251,7 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
             "success": False,
             "error": public_error("payg transport error", type(exc).__name__),
         }
-    try:
-        choice = result["choices"][0]
-        content = choice["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
-    if not isinstance(content, str):
-        return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
-    text = content.strip()
-    if text:
-        output: dict[str, Any] = {
-            "source": alias,
-            "lane": "payg",
-            "success": True,
-            "output": text,
-            "model": result.get("model") if isinstance(result.get("model"), str) else model,
-        }
-        finish_reason = choice.get("finish_reason")
-        if isinstance(finish_reason, str):
-            output["finish_reason"] = finish_reason
-        usage = _safe_usage(result.get("usage"))
-        if usage:
-            output["usage"] = usage
-        return output
-    return {"source": alias, "lane": "payg", "success": False, "error": "empty content"}
+    return _http_parse_response(result, alias, model)
 
 
 def _safe_usage(value: Any) -> dict[str, int | float]:
@@ -470,6 +264,34 @@ def _safe_usage(value: Any) -> dict[str, int | float]:
         if isinstance(metric, (int, float)) and not isinstance(metric, bool) and metric >= 0:
             safe[key] = metric
     return safe
+
+
+def _http_parse_response(result: dict[str, Any], alias: str, model: str) -> dict[str, Any]:
+    """Extract assistant text + safe metadata from a parsed provider response."""
+    try:
+        choice = result["choices"][0]
+        content = choice["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
+    if not isinstance(content, str):
+        return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
+    text = content.strip()
+    if not text:
+        return {"source": alias, "lane": "payg", "success": False, "error": "empty content"}
+    output: dict[str, Any] = {
+        "source": alias,
+        "lane": "payg",
+        "success": True,
+        "output": text,
+        "model": result.get("model") if isinstance(result.get("model"), str) else model,
+    }
+    finish_reason = choice.get("finish_reason")
+    if isinstance(finish_reason, str):
+        output["finish_reason"] = finish_reason
+    usage = _safe_usage(result.get("usage"))
+    if usage:
+        output["usage"] = usage
+    return output
 
 
 # --- Orchestration ----------------------------------------------------------
@@ -550,25 +372,12 @@ def run_panel(
     task = _scrub(task)
     current_model = detect_current_model(current_model)
     all_results: list[dict[str, Any]] = []
-    if preset == "mixed":
-        subs_workers, subs_skipped = _without_current_model(_subs_workers(), current_model)
-        payg_workers, payg_skipped = _without_current_model(PANEL_PAYG, current_model)
-        all_results.extend([*subs_skipped, *payg_skipped])
-        # Mixed always pays for/runs both lanes, so serial execution only adds
-        # latency. Nested pools remain bounded (4 subscription + 2 PAYG seats).
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            subs_future = pool.submit(_run_lane, subs_workers, _cworker_runner, task, timeout)
-            payg_future = pool.submit(_run_lane, payg_workers, _http_runner, task, timeout)
-            all_results.extend(subs_future.result())
-            all_results.extend(payg_future.result())
-        ok = [r for r in all_results if r.get("success") and r.get("output")]
-        return ok + [r for r in all_results if not r.get("success")]
     if preset in ("subs", "mixed"):
         subs_workers, skipped = _without_current_model(_subs_workers(), current_model)
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
-    if preset in PAYG_PRESETS or len(ok) < min_workers:
+    if preset in PAYG_PRESETS or preset == "mixed" or len(ok) < min_workers:
         payg_workers, skipped = _without_current_model(
             _payg_panel_for_preset(preset), current_model
         )
