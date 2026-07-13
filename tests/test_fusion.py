@@ -56,6 +56,8 @@ def test_panel_payg_uses_lane2_only() -> None:
         return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
 
     with (
+        # Isolate from the host session so detect_current_model() does not skip a seat.
+        patch.dict("os.environ", {}, clear=True),
         patch.object(panel_mod, "_http_worker", fake_http),
         patch.object(panel_mod, "_cworker_worker", fake_cworker),
     ):
@@ -86,6 +88,8 @@ def test_panel_subs_falls_back_to_payg() -> None:
         return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
 
     with (
+        # Isolate from the host session so detect_current_model() does not skip a seat.
+        patch.dict("os.environ", {}, clear=True),
         patch.object(panel_mod, "_cworker_worker", fake_cworker),
         patch.object(panel_mod, "_http_worker", fake_http),
     ):
@@ -100,7 +104,11 @@ def test_panel_cheap_uses_low_cost_models() -> None:
         calls.append(spec[2])
         return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
 
-    with patch.object(panel_mod, "_http_worker", fake_http):
+    with (
+        # Isolate from the host session so detect_current_model() does not skip a seat.
+        patch.dict("os.environ", {}, clear=True),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
         res = panel_mod.run_panel("task", preset="cheap")
     ok = [r for r in res if r["success"]]
     check("cheap preset calls all cheap workers", len(ok) == len(panel_mod.PANEL_CHEAP), str(res))
@@ -179,6 +187,8 @@ def test_panel_mixed_always_runs_both_lanes() -> None:
         return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
 
     with (
+        # Isolate from the host session so detect_current_model() does not skip a seat.
+        patch.dict("os.environ", {}, clear=True),
         patch.object(panel_mod, "_cworker_worker", fake_cworker),
         patch.object(panel_mod, "_http_worker", fake_http),
     ):
@@ -192,6 +202,8 @@ def test_panel_mixed_always_runs_both_lanes() -> None:
 
     calls.clear()
     with (
+        # Isolate from the host session so detect_current_model() does not skip a seat.
+        patch.dict("os.environ", {}, clear=True),
         patch.object(panel_mod, "_cworker_worker", fake_cworker),
         patch.object(panel_mod, "_http_worker", fake_http),
     ):
