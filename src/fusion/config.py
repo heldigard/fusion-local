@@ -25,14 +25,15 @@ except ImportError:
         sys.path.insert(0, str(CHEAP_LLM_HOME))
 
 # --- Cross-CLI lane-1 router (subscription-worker dispatch) -----------------
-# Default points at the Claude-ecosystem codex-worker-router. Non-Claude CLIs
-# (Codex / Antigravity / OpenCode) can either:
-#   - point FUSION_ROUTER at their own dispatch shim, or
-#   - set FUSION_ROUTER="" to disable lane-1; the panel then falls back to
-#     lane-2 (PAYG HTTP direct), which is universal.
+# The default path lives under ~/.claude for historical compatibility, but the
+# shim delegates to the CLI-agnostic cli-orchestration/cworker package. Codex,
+# Antigravity, OpenCode, Kimi, and Qwen controllers should normally keep this
+# default whenever the shared harness is installed. Set FUSION_ROUTER="" only
+# for an intentionally PAYG-only environment, or provide another compatible
+# fusion-panel-v1 shim explicitly.
 _env_router = os.environ.get("FUSION_ROUTER")
 DEFAULT_ROUTER = Path.home() / ".claude" / "scripts" / "codex-worker-router.py"
-# unset → Claude ecosystem default; "" → disable lane-1 (panel falls back to lane-2);
+# unset → shared harness default; "" → disable lane-1 (panel falls back to lane-2);
 # "/path" → custom dispatch shim.
 ROUTER: Path | None = (
     None if _env_router == "" else Path(_env_router) if _env_router else DEFAULT_ROUTER

@@ -37,6 +37,7 @@ class FuseOptions:
     judge_timeout: int = 30
     min_workers: int = 2
     current_model: str | None = None
+    judge_prefer_local: bool = True
 
 
 def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
@@ -52,6 +53,8 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     require_positive_int("panel_timeout", o.panel_timeout)
     require_positive_int("judge_timeout", o.judge_timeout)
     require_positive_int("min_workers", o.min_workers)
+    if not isinstance(o.judge_prefer_local, bool):
+        raise ValueError("judge_prefer_local must be a boolean")
     t0 = time.perf_counter()
     # Judge-transport preflight BEFORE the panel: a missing/drifted cheap_llm
     # must fail before PAYG/subscription spend, not after the panel already ran.
@@ -96,6 +99,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
         cloud_model=o.cloud_model,
         timeout=o.judge_timeout,
         min_outputs=o.min_workers,
+        prefer_local=o.judge_prefer_local,
     )
     jd["sources"] = [_source_meta(r) for r in pr]
     jd["total_latency"] = round(time.perf_counter() - t0, 2)
@@ -172,7 +176,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cloud-model",
         type=nonempty_arg,
         default=DEFAULT_JUDGE_MODEL,
-        help=f"Judge model (default: {DEFAULT_JUDGE_MODEL}).",
+        help=f"Pinned T2 judge fallback model (default: {DEFAULT_JUDGE_MODEL}).",
+    )
+    parser.add_argument(
+        "--cloud-judge",
+        action="store_true",
+        help="Skip the local T1 judge and use the pinned T2 cloud judge directly.",
     )
     parser.add_argument(
         "--panel-timeout", type=positive_int_arg, default=60, help="Per-panelist timeout (s)."
@@ -266,6 +275,7 @@ def main() -> int:
                 judge_timeout=args.judge_timeout,
                 min_workers=args.min_workers,
                 current_model=args.current_model,
+                judge_prefer_local=not args.cloud_judge,
             ),
         )
     except ValueError as exc:

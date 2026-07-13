@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,9 @@ CURRENT_MODEL_ENV_KEYS = (
     "CODEX_MODEL",
     "ANTHROPIC_MODEL",
     "GEMINI_MODEL",
+    "ANTIGRAVITY_MODEL",
+    "OPENCODE_MODEL",
+    "KIMI_MODEL",
     "QWEN_MODEL",
 )
 
@@ -51,6 +55,8 @@ def detect_current_model(explicit: str | None = None) -> str | None:
     # model on the panel (echo-chamber seat).
     if os.environ.get("CLAUDECODE", "").strip().lower() in {"1", "true", "yes", "on"}:
         return _claude_settings_model()
+    if os.environ.get("CODEX_THREAD_ID", "").strip() or os.environ.get("CODEX_CI", "").strip():
+        return _codex_settings_model()
     return None
 
 
@@ -61,6 +67,16 @@ def _claude_settings_model() -> str | None:
     except (OSError, json.JSONDecodeError):
         return None
     return model.strip() or None
+
+
+def _codex_settings_model() -> str | None:
+    settings = Path.home() / ".codex" / "config.toml"
+    try:
+        payload = tomllib.loads(settings.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    model = payload.get("model")
+    return model.strip() or None if isinstance(model, str) else None
 
 
 def _identity_model(identity: str) -> str | None:

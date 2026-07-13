@@ -327,6 +327,23 @@ def test_detect_current_model_reads_claude_settings() -> None:
     check("CLAUDECODE session reads settings.json model", model == "claude-fable-5[1m]", str(model))
 
 
+def test_detect_current_model_reads_codex_settings() -> None:
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = _P(tmp)
+        settings = home / ".codex" / "config.toml"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('model = "gpt-5.6-sol"\n', encoding="utf-8")
+        with (
+            patch.dict("os.environ", {"CODEX_THREAD_ID": "test-session"}, clear=True),
+            patch.object(panel_mod.Path, "home", staticmethod(lambda: home)),
+        ):
+            model = panel_mod.detect_current_model()
+    check("Codex session reads config.toml model", model == "gpt-5.6-sol", str(model))
+
+
 def test_current_model_1m_suffix_matches_panel_seat() -> None:
     seat = ("claude-fable-5", panel_mod.OPENROUTER_URL, "anthropic/claude-fable-5", "K")
     matched = panel_mod._matches_current_model(seat, "claude-fable-5[1m]")
@@ -562,6 +579,28 @@ def test_judge_keeps_untrusted_panel_text_out_of_system_prompt() -> None:
     check("adversarial panel text not in system", marker not in seen["system"], seen["system"])
     check("adversarial panel text stays in data prompt", marker in seen["prompt"])
     check("isolated judge prompt remains valid", result["judge_valid"] is True, str(result))
+
+
+def test_judge_cloud_only_policy_reaches_cheap_llm() -> None:
+    seen: dict[str, Any] = {}
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+
+    def fake(system, prompt, **kwargs):
+        seen.update(kwargs)
+        return _fake_cheap_complete(env)(system, prompt, **kwargs)
+
+    with patch("cheap_llm.cheap_complete", fake):
+        result = judge_mod.run_judge(
+            "task", [{"source": "x", "output": "y"}], prefer_local=False
+        )
+    check("cloud-only judge remains valid", result["judge_valid"] is True, str(result))
+    check("cloud-only judge skips cheap_llm T1", seen.get("prefer_local") is False, str(seen))
 
 
 def test_judge_bounds_each_untrusted_panel_record() -> None:
@@ -862,6 +901,7 @@ def test_judge_validates_inputs_before_transport() -> None:
 
     invalid_none: Any = None
     invalid_items: Any = [None]
+    invalid_bool: Any = 1
     cases = [
         lambda: judge_mod.run_judge("", []),
         lambda: judge_mod.run_judge("task", invalid_none),
@@ -869,6 +909,7 @@ def test_judge_validates_inputs_before_transport() -> None:
         lambda: judge_mod.run_judge("task", [], timeout=0),
         lambda: judge_mod.run_judge("task", [], timeout=True),
         lambda: judge_mod.run_judge("task", [], cloud_model=" "),
+        lambda: judge_mod.run_judge("task", [], prefer_local=invalid_bool),
     ]
     with patch("cheap_llm.cheap_complete", recorder):
         for invoke in cases:
@@ -1053,6 +1094,11 @@ def test_cli_main_json() -> None:
     check("main --json exit 0", rc == 0, str(rc))
     check("main --json envelope", parsed["consensus"] == "C")
     check("main --json current model", parsed["current_model"] == "qwen/qwen3.7-plus")
+
+
+def test_cli_cloud_judge_flag() -> None:
+    args = fcli._build_parser().parse_args(["Q?", "--cloud-judge"])
+    check("CLI exposes explicit cloud-only judge", args.cloud_judge is True)
 
 
 def test_cli_version_uses_distribution_name() -> None:
@@ -1453,6 +1499,7 @@ TESTS = [
         "detect_current_model_reads_claude_settings",
         test_detect_current_model_reads_claude_settings,
     ),
+    ("detect_current_model_reads_codex_settings", test_detect_current_model_reads_codex_settings),
     (
         "current_model_1m_suffix_matches_panel_seat",
         test_current_model_1m_suffix_matches_panel_seat,
@@ -1475,6 +1522,7 @@ TESTS = [
         "judge_keeps_untrusted_panel_text_out_of_system_prompt",
         test_judge_keeps_untrusted_panel_text_out_of_system_prompt,
     ),
+    ("judge_cloud_only_policy_reaches_cheap_llm", test_judge_cloud_only_policy_reaches_cheap_llm),
     ("judge_bounds_each_untrusted_panel_record", test_judge_bounds_each_untrusted_panel_record),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
     ("judge_rejects_missing_schema_fields", test_judge_rejects_missing_schema_fields),
@@ -1502,6 +1550,7 @@ TESTS = [
     ("fuse_invalid_inputs_block_preflight", test_fuse_invalid_inputs_block_preflight),
     ("fuse_echoes_current_model", test_fuse_echoes_current_model),
     ("cli_main_json", test_cli_main_json),
+    ("cli_cloud_judge_flag", test_cli_cloud_judge_flag),
     ("cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),
     ("version_source_fallback_is_honest", test_version_source_fallback_is_honest),
     ("cli_capabilities_contract", test_cli_capabilities_contract),

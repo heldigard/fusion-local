@@ -91,6 +91,7 @@ def run_judge(
     cloud_model: str | None = DEFAULT_JUDGE_MODEL,
     timeout: int = 30,
     min_outputs: int = 1,
+    prefer_local: bool = True,
 ) -> dict[str, Any]:
     """Judge the panel into the 5-field schema via the cheap_llm cascade.
 
@@ -106,6 +107,8 @@ def run_judge(
     require_nonempty_string("cloud_model", cloud_model, optional=True)
     require_positive_int("timeout", timeout)
     require_positive_int("min_outputs", min_outputs)
+    if not isinstance(prefer_local, bool):
+        raise ValueError("prefer_local must be a boolean")
 
     output_count = sum(
         isinstance(result.get("output"), str) and bool(result["output"].strip())
@@ -155,6 +158,7 @@ def run_judge(
             schema_hint=list(FUSION_FIELDS),
             timeout_total=float(timeout),
             cloud_model=cloud_model,
+            prefer_local=prefer_local,
             require_json=True,
         )
     except Exception as exc:  # noqa: BLE001 — preserve the already-gathered panel signal

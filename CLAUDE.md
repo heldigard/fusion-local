@@ -10,8 +10,9 @@ script on `~/.local/bin`).
 
 The **deliberation layer** for the big model. Two modes, distinct wire contracts:
 
-- **fusion (DEFAULT, local)**: panel of subscription workers ($0) + cheap_llm judge
-  (`deepseek-v4-flash` BYOK $0, 1M ctx) + `JUDGE_SCHEMA_PROMPT`. Cost ≈ $0–0.04.
+- **fusion (DEFAULT, local)**: panel of subscription workers ($0) + local-first
+  cheap_llm judge (`deepseek-v4-flash` pinned T2 fallback) + `JUDGE_SCHEMA_PROMPT`.
+  Cost ≈ $0–0.04.
 - **fusion --openrouter**: hosted `openrouter/fusion`, every panelist searches the live
   web. PAYG, ~½ a frontier call. Default output is assistant text; `--json` is the raw
   provider Chat Completion, not the local five-field envelope.
@@ -48,7 +49,7 @@ PANEL LANE 1 ($0 subs, parallel)   codex-spark · agy35-flash · kimic · zai
     fallback when < min_workers succeed ↓
 PANEL LANE 2 (PAYG, HTTP direct)   deepseek-v4-pro · qwen3.7-max (OpenRouter)
     ↓
-JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_PROMPT
+JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE_SCHEMA_PROMPT
     → 5-field JSON {consensus, contradictions, coverage_gaps, unique_insights, blind_spots}
 ```
 
@@ -117,6 +118,7 @@ fusion --json "<Q>"                           # full 5-field envelope as JSON
 fusion --preset mixed "<Q>"                   # always subs + default PAYG panel
 fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
 fusion --preset ultra --current-model "$MODEL" "<Q>"
+fusion --preset ultra --cloud-judge --cloud-model deepseek/deepseek-v4-pro "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --json "<Q>"              # raw OpenRouter Chat Completion JSON
@@ -164,10 +166,12 @@ fusion --version
   verified in the live OpenRouter catalog (2026-07-12); legacy `gpt-5.5-pro`
   dropped. Gemini kept on the `~google/gemini-pro-latest` alias because Google
   exposes no pinned pro ID beyond it.
-- **Judge**: `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"` (override `--cloud-model`).
+- **Judge**: local-first; `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"`
+  pins T2. `--cloud-judge` skips T1; `--cloud-model` selects that T2 model.
 - **Current-model exclusion**: `--current-model` or env (`FUSION_CURRENT_MODEL`,
-  `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, `QWEN_MODEL`)
-  skips matching panelists and reports them in `sources[]`.
+  `CONTROLLER_MODEL`, CLI-specific `*_MODEL`) skips matching panelists and
+  reports them in `sources[]`. Claude/Codex sessions also read their canonical
+  settings/config model when no env override exists.
 
 ## Preset selection by complexity
 

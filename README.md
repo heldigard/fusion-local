@@ -14,8 +14,8 @@ Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
 Two deliberation modes with the same multi-perspective goal but different wire contracts:
 
 - **`fusion` (DEFAULT, local)** — a panel of diverse subscription workers (codex-spark /
-  agy35-flash / kimic / zai — $0) drafts answers in parallel; a cheap_llm judge
-  (`deepseek-v4-flash` BYOK $0, 1M ctx) synthesizes them into the 5-field schema. Falls
+  agy35-flash / kimic / zai — $0) drafts answers in parallel; a local-first cheap_llm
+  judge with `deepseek-v4-flash` as its T2 fallback synthesizes the 5-field schema. Falls
   back to PAYG HTTP-direct panelists if subs are exhausted. Cost ≈ **$0–0.04**.
 - **`fusion --openrouter`** — the hosted `openrouter/fusion` model where every panelist
   searches the live web before answering. Use when the answer needs FRESH sources
@@ -44,8 +44,9 @@ tests/
 └── test_delegate.py   hosted payload/transport/stream/exit contracts (offline, mocked)
 ```
 
-Each module is one cohesive feature (≤5 params/fn, shallow nesting). The judge reuses
-the [`cheap-llm`](../cheap-llm) cascade (`cheap_complete` with `cloud_model=`), imported
+Each module is one cohesive feature with bounded public signatures and shallow nesting. The judge reuses
+the [`cheap-llm`](../cheap-llm) cascade (`cheap_complete` with a pinned T2
+`cloud_model=` fallback), imported
 via `CHEAP_LLM_HOME` — no pip dependency.
 
 ## Cross-CLI usage (Claude Code, Codex, Antigravity, OpenCode)
@@ -97,6 +98,7 @@ fusion --preset mixed "<Q>"                   # always run subs + default PAYG p
 fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
 fusion --preset intelligence "<Q>"            # frontier-accessible (medium-high complexity)
 fusion --preset ultra --current-model "$MODEL" "<Q>"  # full frontier (high-stakes only)
+fusion --preset ultra --cloud-judge --cloud-model deepseek/deepseek-v4-pro "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --panel "anthropic/claude-opus-latest,openai/gpt-latest" "<Q>"
@@ -130,8 +132,10 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
   delegate / cli), with `_boundary` and `_version` as small shared contract modules.
   `FuseOptions` is a parameter object (keeps `fuse()` arity ≤ 5).
 - Module/function names don't collide (`run_panel`, `run_judge` — not `panel.panel`).
-- The judge is `cheap_complete(cloud_model="deepseek-v4-flash")` — never a frontier
-  model. Quality comes from the 5-field schema + a 1M-ctx economical judge.
+- The judge is local-first with `deepseek/deepseek-v4-flash` pinned as its T2
+  fallback — never a frontier panel seat. For a high-stakes synthesis, use
+  `--cloud-judge --cloud-model deepseek/deepseek-v4-pro`; the model is explicit
+  so Fusion never adds spend silently based on the preset.
 - **Secret scrub at every third-party boundary**: the judge inherits it from cheap_llm
   (`scrub_secrets` via `cheap_complete`); the panel scrubs the task itself before
   fanning out to lane-1/lane-2 workers. Local and hosted paths fail closed before
@@ -182,9 +186,13 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
   verified in the live OpenRouter catalog (2026-07-12); legacy `gpt-5.5-pro`
   dropped. Gemini stays on the `~google/gemini-pro-latest` alias (no pinned pro
   ID is exposed beyond it).
-- **Judge**: `deepseek/deepseek-v4-flash` (BYOK $0, 1M ctx) via cheap_llm cascade.
+- **Judge**: local-first cheap_llm cascade with `deepseek/deepseek-v4-flash`
+  (1M ctx) pinned as T2 fallback; explicit `--cloud-judge` skips T1.
 - **Current-model exclusion**: pass `--current-model`, or set `FUSION_CURRENT_MODEL`,
-  `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, or `QWEN_MODEL`.
+  `CONTROLLER_MODEL`, or the CLI-specific model env. Claude sessions fall back
+  to `~/.claude/settings.json`; Codex sessions fall back to the root `model` in
+  `~/.codex/config.toml`. Other harnesses can use `ANTIGRAVITY_MODEL`,
+  `OPENCODE_MODEL`, `KIMI_MODEL`, or `QWEN_MODEL`.
   Matching panelists are skipped and reported in `sources[]` so the controller does not
   ask the same model to validate itself.
 
