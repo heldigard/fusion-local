@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ._boundary import (
+    SecretScrubError,
     nonempty_arg,
     positive_int_arg,
     require_nonempty_string,
@@ -57,25 +58,64 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     gate = preflight()
     if not gate["ok"]:
         return empty_fields(
+            schema_version=1,
+            status="degraded",
             judge_model=None,
             judge_valid=False,
             error=gate["error"],
             sources=[],
             preset=o.preset,
+            panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
         )
     current_model = detect_current_model(o.current_model)
-    pr = run_panel(
+    try:
+        pr = run_panel(
+            task,
+            preset=o.preset,
+            timeout=o.panel_timeout,
+            min_workers=o.min_workers,
+            current_model=current_model,
+        )
+    except SecretScrubError:
+        return empty_fields(
+            schema_version=1,
+            status="degraded",
+            judge_model=None,
+            judge_valid=False,
+            error="panel prompt scrub unavailable",
+            sources=[],
+            preset=o.preset,
+            panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
+            total_latency=round(time.perf_counter() - t0, 2),
+        )
+    successful = sum(bool(r.get("success") and r.get("output")) for r in pr)
+    jd = run_judge(
         task,
-        preset=o.preset,
-        timeout=o.panel_timeout,
-        min_workers=o.min_workers,
-        current_model=current_model,
+        pr,
+        cloud_model=o.cloud_model,
+        timeout=o.judge_timeout,
+        min_outputs=o.min_workers,
     )
-    jd = run_judge(task, pr, cloud_model=o.cloud_model, timeout=o.judge_timeout)
     jd["sources"] = [_source_meta(r) for r in pr]
     jd["total_latency"] = round(time.perf_counter() - t0, 2)
     jd["preset"] = o.preset
+    jd["schema_version"] = 1
+    jd["status"] = "ok" if jd.get("judge_valid") else "degraded"
+    jd["panel_quorum"] = {
+        "required": o.min_workers,
+        "successful": successful,
+        "met": successful >= o.min_workers,
+    }
+    panel_cost = sum(
+        float(r.get("usage", {}).get("cost", 0))
+        for r in pr
+        if isinstance(r.get("usage"), dict)
+        and isinstance(r.get("usage", {}).get("cost", 0), (int, float))
+    )
+    judge_cost = jd.get("cost", 0)
+    if isinstance(judge_cost, (int, float)) and not isinstance(judge_cost, bool):
+        jd["total_known_cost"] = panel_cost + float(judge_cost)
     if current_model:
         jd["current_model"] = current_model
     return jd
@@ -94,6 +134,12 @@ def _source_meta(r: dict[str, Any]) -> dict[str, Any]:
         meta["skipped"] = True
     if isinstance(r.get("duration_seconds"), (int, float)):
         meta["duration_seconds"] = r["duration_seconds"]
+    if isinstance(r.get("model"), str):
+        meta["model"] = r["model"]
+    if isinstance(r.get("finish_reason"), str):
+        meta["finish_reason"] = r["finish_reason"]
+    if isinstance(r.get("usage"), dict):
+        meta["usage"] = r["usage"]
     return meta
 
 
@@ -175,9 +221,12 @@ def _print_readable(envelope: dict[str, Any]) -> None:
             print(f"- {item}")
     sources = envelope.get("sources", [])
     ok = [s for s in sources if s.get("success")]
+    attempted = [s for s in sources if not s.get("skipped")]
+    skipped = [s for s in sources if s.get("skipped")]
     print(
         f"\n## Meta\nJudge: {envelope.get('judge_model')} "
-        f"(valid={envelope.get('judge_valid')}) | Panel OK: {len(ok)}/{len(sources)} "
+        f"(valid={envelope.get('judge_valid')}) | Panel OK: {len(ok)}/{len(attempted)} "
+        f"| skipped: {len(skipped)} "
         f"| latency: {envelope.get('total_latency')}s"
     )
     if envelope.get("error"):

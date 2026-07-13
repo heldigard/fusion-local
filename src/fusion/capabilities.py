@@ -6,9 +6,17 @@ import os
 from typing import Any
 
 from . import config
+from ._boundary import MAX_EXTERNAL_RESPONSE_BYTES
 from ._version import __version__
 from .judge import CHEAP_LLM_MIN_VERSION, preflight
-from .panel import CURRENT_MODEL_ENV_KEYS, PANEL_PRESETS, PANEL_SUBS_ENV
+from .panel import (
+    CURRENT_MODEL_ENV_KEYS,
+    PANEL_PAYG,
+    PANEL_PRESETS,
+    PANEL_SUBS,
+    PANEL_SUBS_ENV,
+    PAYG_PRESETS,
+)
 
 
 def capabilities_payload() -> dict[str, Any]:
@@ -54,6 +62,8 @@ def _capability_entries() -> list[dict[str, Any]]:
             default_output_format="text",
             output={
                 "json_fields": [
+                    "schema_version",
+                    "status",
                     "consensus",
                     "contradictions",
                     "coverage_gaps",
@@ -62,9 +72,15 @@ def _capability_entries() -> list[dict[str, Any]]:
                     "judge_valid",
                     "error",
                     "panel_evidence",
+                    "panel_quorum",
+                    "total_known_cost",
                 ]
             },
-            prerequisites=[f"cheap_llm>={CHEAP_LLM_MIN_VERSION}"],
+            preset_details=_preset_details(),
+            prerequisites=[
+                f"cheap_llm>={CHEAP_LLM_MIN_VERSION}",
+                "available fail-closed prompt scrubber",
+            ],
             exit_codes={"0": "strict judge result", "2": "degraded result or invalid usage"},
             recovery=(
                 "On exit 2, inspect error and optional panel_evidence; do not treat the "
@@ -140,12 +156,39 @@ def _cap(name: str, purpose: str, **overrides: Any) -> dict[str, Any]:
     return entry
 
 
+def _preset_details() -> dict[str, dict[str, Any]]:
+    details: dict[str, dict[str, Any]] = {
+        "subs": {
+            "lanes": ["subscription"],
+            "nominal_seats": len(PANEL_SUBS),
+            "fallback": "default PAYG only when successful subscription seats are below quorum",
+        },
+        "mixed": {
+            "lanes": ["subscription", "payg"],
+            "nominal_seats": len(PANEL_SUBS) + len(PANEL_PAYG),
+            "fallback": "none; both lanes always run",
+        },
+    }
+    for name, specs in PAYG_PRESETS.items():
+        details[name] = {
+            "lanes": ["payg"],
+            "nominal_seats": len(specs),
+            "models": [spec[2] for spec in specs],
+            "fallback": "none",
+        }
+    return details
+
+
 def _health_payload() -> dict[str, Any]:
     """Static contract wiring + cheap live probes (all local, no network)."""
     return {
         "cheap_llm_min_version": CHEAP_LLM_MIN_VERSION,
         "router_env": "FUSION_ROUTER",
         "panel_subs_env": PANEL_SUBS_ENV,
+        "router_protocol": "fusion-panel-v1",
+        "max_external_response_bytes": MAX_EXTERNAL_RESPONSE_BYTES,
+        "quorum": "final successful output count must satisfy min_workers before judging",
+        "network_probed": False,
         "current_model_envs": CURRENT_MODEL_ENV_KEYS,
         "live": _live_probes(),
     }

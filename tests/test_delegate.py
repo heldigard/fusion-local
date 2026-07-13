@@ -231,7 +231,7 @@ def test_main_success_text_and_raw_json() -> None:
     for json_mode in (False, True):
         stdout = io.StringIO()
         stderr = io.StringIO()
-        argv = ["fusion", "Q", *( ["--json"] if json_mode else [])]
+        argv = ["fusion", "Q", *(["--json"] if json_mode else [])]
         with (
             patch.object(delegate, "_require_key", return_value="test-key"),
             patch.object(delegate, "_scrub_prompt", return_value="SCRUBBED"),

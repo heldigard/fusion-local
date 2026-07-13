@@ -65,6 +65,10 @@ Panel **lane-1** (subscription workers, $0) routes through the codex-worker-rout
 - set `FUSION_ROUTER=/path/to/your/dispatch` to wire lane-1 to your own dispatch, **or**
 - set `FUSION_ROUTER=` (empty) to disable lane-1 entirely.
 
+The first-party router uses `fusion-panel-v1`: answer-only stdout, no tools, no
+router-level cloud fallback, and bounded output. Fusion owns all lane-2/PAYG
+decisions, so a nominal subscription seat cannot silently become a cloud worker.
+
 Lane-1 **worker modes** are overridable the same way: `FUSION_PANEL_SUBS` unset →
 default (`codex-spark,agy35-flash,kimic,zai`); `FUSION_PANEL_SUBS=a,b` → custom
 modes for your dispatch; `FUSION_PANEL_SUBS=` (empty) → disable lane-1.
@@ -112,7 +116,9 @@ it is for `cli-orchestration doctor`, routers, and workers, not for the
 deliberation hot path.
 
 **Local exit codes** (both `--json` and readable): `0` = valid strict 5-field synthesis
-(`judge_valid: true`), `2` = degraded (`error` + optional `panel_evidence`).
+with final quorum (`judge_valid: true`), `2` = degraded (`error`, `panel_quorum`,
+and optional `panel_evidence`). JSON also carries `schema_version`, `status`, safe
+per-source usage/timing metadata, and `total_known_cost` when providers report it.
 
 **Hosted exit codes:** `0` = usable assistant response, `1` = missing key or fail-closed
 prompt scrub unavailable, `2` = invalid usage or provider/network/malformed response.
@@ -128,9 +134,8 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
   model. Quality comes from the 5-field schema + a 1M-ctx economical judge.
 - **Secret scrub at every third-party boundary**: the judge inherits it from cheap_llm
   (`scrub_secrets` via `cheap_complete`); the panel scrubs the task itself before
-  fanning out to lane-1/lane-2 workers (best-effort — identity when cheap_llm is
-  absent and `run_panel` is called directly); hosted `--openrouter` fails closed if its
-  prompt cannot be scrubbed.
+  fanning out to lane-1/lane-2 workers. Local and hosted paths fail closed before
+  dispatch if their prompt cannot be scrubbed.
 - **Validate before spend**: public APIs reject blank tasks, unknown presets, invalid
   option objects, and non-positive strict integers with `ValueError`; CLIs reject the
   same inputs through argparse before preflight or dispatch. Explicit `mixed` always
@@ -149,6 +154,11 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
   panel completes, preserving `panel_evidence` and the CLI's structured exit-2 envelope.
 - **Router exit-status validation**: lane-1 accepts stdout only from a zero-exit router;
   partial stdout from a failed process is discarded rather than judged as evidence.
+- **Final quorum**: `min_workers` is both the subscription-fallback threshold and the
+  minimum successful-output count before judge synthesis. Set `--min-workers 1`
+  explicitly only when a single-seat result is intentional.
+- **Judge injection boundary**: bounded panel answers are serialized as untrusted JSON
+  in the judge user message, never concatenated into the judge system policy.
 - **Recursion guard** on panelists: `[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]`.
 
 ## Commands

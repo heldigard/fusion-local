@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -106,9 +108,9 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
         "google/gemini-pro-latest",
         "gemini-pro-latest",
     ),
-    "anthropic/claude-opus-4.8": ("claude-opus-4-8", "claude-opus-4.8"),
-    "anthropic/claude-fable-5": ("claude-fable-5",),
-    "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol", "gpt-5.6"),
+    "anthropic/claude-opus-4.8": ("claude-opus-4-8", "claude-opus-4.8", "opus"),
+    "anthropic/claude-fable-5": ("claude-fable-5", "fable", "default"),
+    "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol"),
     "x-ai/grok-4.5": ("grok-4.5", "grok-4-5", "grok-4.5-20260708"),
     "deepseek/deepseek-v4-pro": ("deepseek-v4-pro",),
     "deepseek/deepseek-v4-flash": ("deepseek-v4-flash",),
@@ -172,8 +174,8 @@ def _identity_model(identity: str) -> str | None:
     except json.JSONDecodeError:
         return _colon_identity_model(identity)
     if isinstance(payload, dict):
-        model = str(payload.get("model") or "").strip()
-        return model or None
+        model = payload.get("model")
+        return model.strip() or None if isinstance(model, str) else None
     return _colon_identity_model(str(payload))
 
 
@@ -185,9 +187,9 @@ def _colon_identity_model(identity: str) -> str | None:
 
 
 def _normalize_name(value: str) -> str:
-    # "[1m]" is Claude Code's context-window suffix, not part of the model id;
-    # without stripping it "claude-fable-5[1m]" never matches "claude-fable-5".
-    return value.strip().lower().lstrip("~").replace("[1m]", "")
+    # Bracketed terminal context-window suffixes are not part of a model id.
+    normalized = value.strip().lower().lstrip("~")
+    return re.sub(r"\[[^\]]+\]$", "", normalized)
 
 
 def _model_key(value: str) -> str:
@@ -257,7 +259,7 @@ def _without_current_model(
 
 
 def _payg_panel_for_preset(preset: str) -> list[Spec]:
-    if preset in ("subs", "mixed"):
+    if preset == "subs":
         return PANEL_PAYG
     return PAYG_PRESETS[preset]
 
@@ -271,13 +273,14 @@ def _subs_workers() -> list[str]:
 
 
 def _scrub(text: str) -> str:
-    """Best-effort secret scrub before fanning the task out to external models.
+    """Fail-closed secret scrub before fanning out to external models.
 
     The judge path scrubs unconditionally inside cheap_llm; panel workers are
-    ALSO third parties, so scrub here too. Degrades to identity when cheap_llm
-    is unavailable (direct run_panel use without the fuse() preflight).
+    ALSO third parties, so scrub here too. A scrub failure must never degrade to
+    sending the original text: direct ``run_panel`` callers receive
+    ``SecretScrubError`` and ``fuse`` converts it to a safe degraded envelope.
     """
-    return scrub_external_text(text, fail_closed=False)
+    return scrub_external_text(text, fail_closed=True)
 
 
 # --- Lane 1: cworker subprocess ($0 subscription workers) -------------------
@@ -294,13 +297,30 @@ def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
         }
     guarded = WORKER_GUARD + task
     try:
-        proc = subprocess.run(
-            ["python3", str(config.ROUTER), "--mode", mode, "--timeout", str(timeout)],
-            input=guarded,
-            capture_output=True,
-            text=True,
-            timeout=timeout + 15,
-        )
+        # The versioned protocol makes stdout answer-only and disables the
+        # router's own PAYG fallback. Fusion exclusively owns lane-2/cost policy.
+        command = [
+            "python3",
+            str(config.ROUTER),
+            "--mode",
+            mode,
+            "--timeout",
+            str(timeout),
+            "--protocol",
+            "fusion-panel-v1",
+        ]
+        # Do not use capture_output: a misbehaving router could otherwise fill
+        # memory before Fusion gets a chance to enforce its response limit.
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            proc = subprocess.run(
+                command,
+                input=guarded.encode("utf-8"),
+                stdout=stdout_file,
+                stderr=stderr_file,
+                timeout=timeout + 15,
+            )
+            stdout_file.seek(0)
+            raw_stdout = stdout_file.read(MAX_EXTERNAL_RESPONSE_BYTES + 1)
     except subprocess.TimeoutExpired:
         return {"source": mode, "lane": "subscription", "success": False, "error": "timeout"}
     except FileNotFoundError as exc:
@@ -317,7 +337,27 @@ def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
             "success": False,
             "error": public_error("router failure", type(exc).__name__),
         }
-    out = (proc.stdout or "").strip()
+    mocked_stdout = getattr(proc, "stdout", None)
+    if isinstance(mocked_stdout, str):
+        raw_stdout = mocked_stdout.encode("utf-8")
+    elif isinstance(mocked_stdout, bytes):
+        raw_stdout = mocked_stdout
+    if len(raw_stdout) > MAX_EXTERNAL_RESPONSE_BYTES:
+        return {
+            "source": mode,
+            "lane": "subscription",
+            "success": False,
+            "error": "router response too large",
+        }
+    try:
+        out = raw_stdout.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return {
+            "source": mode,
+            "lane": "subscription",
+            "success": False,
+            "error": "router returned malformed output",
+        }
     if proc.returncode != 0:
         return {
             "source": mode,
@@ -395,15 +435,41 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
             "error": public_error("payg transport error", type(exc).__name__),
         }
     try:
-        content = result["choices"][0]["message"]["content"]
+        choice = result["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError):
         return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
     if not isinstance(content, str):
         return {"source": alias, "lane": "payg", "success": False, "error": "malformed response"}
     text = content.strip()
     if text:
-        return {"source": alias, "lane": "payg", "success": True, "output": text}
+        output: dict[str, Any] = {
+            "source": alias,
+            "lane": "payg",
+            "success": True,
+            "output": text,
+            "model": result.get("model") if isinstance(result.get("model"), str) else model,
+        }
+        finish_reason = choice.get("finish_reason")
+        if isinstance(finish_reason, str):
+            output["finish_reason"] = finish_reason
+        usage = _safe_usage(result.get("usage"))
+        if usage:
+            output["usage"] = usage
+        return output
     return {"source": alias, "lane": "payg", "success": False, "error": "empty content"}
+
+
+def _safe_usage(value: Any) -> dict[str, int | float]:
+    """Allowlist numeric provider usage fields; never retain arbitrary response data."""
+    if not isinstance(value, dict):
+        return {}
+    safe: dict[str, int | float] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cost"):
+        metric = value.get(key)
+        if isinstance(metric, (int, float)) and not isinstance(metric, bool) and metric >= 0:
+            safe[key] = metric
+    return safe
 
 
 # --- Orchestration ----------------------------------------------------------
@@ -484,12 +550,25 @@ def run_panel(
     task = _scrub(task)
     current_model = detect_current_model(current_model)
     all_results: list[dict[str, Any]] = []
+    if preset == "mixed":
+        subs_workers, subs_skipped = _without_current_model(_subs_workers(), current_model)
+        payg_workers, payg_skipped = _without_current_model(PANEL_PAYG, current_model)
+        all_results.extend([*subs_skipped, *payg_skipped])
+        # Mixed always pays for/runs both lanes, so serial execution only adds
+        # latency. Nested pools remain bounded (4 subscription + 2 PAYG seats).
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            subs_future = pool.submit(_run_lane, subs_workers, _cworker_runner, task, timeout)
+            payg_future = pool.submit(_run_lane, payg_workers, _http_runner, task, timeout)
+            all_results.extend(subs_future.result())
+            all_results.extend(payg_future.result())
+        ok = [r for r in all_results if r.get("success") and r.get("output")]
+        return ok + [r for r in all_results if not r.get("success")]
     if preset in ("subs", "mixed"):
         subs_workers, skipped = _without_current_model(_subs_workers(), current_model)
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
-    if preset in PAYG_PRESETS or preset == "mixed" or len(ok) < min_workers:
+    if preset in PAYG_PRESETS or len(ok) < min_workers:
         payg_workers, skipped = _without_current_model(
             _payg_panel_for_preset(preset), current_model
         )

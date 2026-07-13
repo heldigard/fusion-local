@@ -67,8 +67,8 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
   (cheap_llm import + `require(CHEAP_LLM_MIN_VERSION)`) BEFORE the panel fan-out.
   `run_judge` degrades gracefully on drift or a post-panel judge transport exception,
   preserving `panel_evidence` and the structured degraded envelope.
-- **Panel-side secret scrub**: `run_panel` scrubs the task via `cheap_llm.scrub_secrets`
-  before lane-1/lane-2 (best-effort; judge path scrubs unconditionally inside cheap_llm).
+- **Panel-side secret scrub**: `run_panel` scrubs via `cheap_llm.scrub_secrets` and
+  fails closed before lane-1/lane-2 if scrubbing is unavailable.
 - **Hosted fail-closed scrub**: `--openrouter` does not perform HTTP if prompt scrub is
   unavailable; key/scrub setup failures exit 1.
 - **Validate before spend**: APIs use `ValueError`, CLIs use argparse exit 2; blank tasks,
@@ -81,6 +81,12 @@ JUDGE  cheap_complete(cloud_model="deepseek/deepseek-v4-flash") + JUDGE_SCHEMA_P
   decoding; oversized responses fail as normal operational errors.
 - **Router exit-status validation**: lane-1 accepts stdout only when its dispatch process
   exits zero; partial stdout from failed dispatch is never promoted to panel evidence.
+- **Router protocol**: lane-1 uses `fusion-panel-v1` (answer-only stdout, no tools,
+  no router-level cloud fallback). Fusion exclusively owns PAYG fallback.
+- **Final quorum**: fewer than `min_workers` successful outputs degrades before judge
+  transport and preserves bounded panel evidence.
+- **Judge isolation**: panel text is bounded and serialized as untrusted user data,
+  never placed in the judge system message.
 - **Local exit codes**: `0` = `judge_valid: true`, `2` = degraded.
 - **Hosted exit codes**: `0` usable response, `1` key/scrub setup, `2` usage/operational
   failure. Hosted `--json` is raw provider JSON on success and stdout is empty on error.
@@ -128,8 +134,8 @@ fusion --version
 - **Vertical-slice**: feature-per-module (config/panel/judge/delegate/cli), with small
   shared `_boundary` and `_version` contract modules.
 - `FuseOptions` dataclass — parameter object (keeps `fuse()` arity ≤ 5).
-- **Secret scrub on all external paths**: judge unconditionally inside cheap_llm; panel
-  best-effort for direct compatibility; hosted delegate fail-closed before HTTP.
+- **Secret scrub on all external paths**: judge unconditionally inside cheap_llm;
+  panel and hosted delegate fail closed before external dispatch.
 - **Recursion guard** on panelists: `[FUSION_PANEL][NO_DELEGATE][NO_TOOLS]`.
 
 ## Commands
