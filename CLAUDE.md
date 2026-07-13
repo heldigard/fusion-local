@@ -143,10 +143,39 @@ fusion --version
 - **Panel lane 1 ($0 subs)**: `["codex-spark", "agy35-flash", "kimic", "zai"]`.
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max`.
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
-- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.5-pro`,
-  `~google/gemini-pro-latest`. GPT-5.6 is GA in OpenAI/Codex, but do not
-  hardcode an OpenRouter GPT-5.6 ID until this provider-specific catalog is verified.
+- **Intelligence preset**: `x-ai/grok-4.5`, `~google/gemini-pro-latest`,
+  `openai/gpt-5.6-terra`, `deepseek/deepseek-v4-pro`. Frontier-accessible, 4
+  families (xAI/Google/OpenAI/DeepSeek), deliberately EXCLUDING the premium
+  closed seats (`claude-fable-5` $50, `gpt-5.6-sol-pro` $30, `claude-opus-4.8`
+  $25 per M output) that ultra reserves for high-stakes work. ~5x cheaper than
+  ultra per deliberation.
+- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.6-sol-pro`,
+  `~google/gemini-pro-latest`, `x-ai/grok-4.5`. GPT-5.6 Sol Pro and Grok 4.5
+  verified in the live OpenRouter catalog (2026-07-12); legacy `gpt-5.5-pro`
+  dropped. Gemini kept on the `~google/gemini-pro-latest` alias because Google
+  exposes no pinned pro ID beyond it.
 - **Judge**: `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"` (override `--cloud-model`).
 - **Current-model exclusion**: `--current-model` or env (`FUSION_CURRENT_MODEL`,
   `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, `QWEN_MODEL`)
   skips matching panelists and reports them in `sources[]`.
+
+## Preset selection by complexity
+
+Cost is output $/M tokens (live OpenRouter, 2026-07-12). The controller decides
+when to invoke fusion and which preset fits the stakes — fusion itself never
+auto-invokes. Pick the cheapest panel whose downside-risk you can tolerate.
+
+| Preset | Seats | Output $/M range | Use when | Avoid when |
+|---|---|---|---|---|
+| `subs` | 4 | $0 (subscription) | default first pass; controller has subs quota left | quota exhausted or non-Claude CLI without `FUSION_ROUTER` |
+| `cheap` | 4 | $0.15–1.28 | low-stakes sanity check, second opinion on routine code | irreversible / security / architecture |
+| `payg` | 2 | $0.87–3.75 | general deliberation, open-capable diversity | need frontier reasoning depth |
+| `intelligence` | 4 | $6–15 | medium-high complexity: design tradeoffs, hard bugs, unfamiliar APIs | trivial work (waste) or truly irreversible (use ultra) |
+| `ultra` | 5 | $6–50 | HIGH-STAKES only: migrations, security/auth, prod deploys, irreversible architecture | anything reversible or low-complexity — premium seats ($25–50/M) burn budget for no gain |
+| `mixed` | 6 | $0–3.75 | want subs diversity AND a PAYG floor | tight cost budget |
+
+**Rule of thumb:** escalate `cheap → payg → intelligence → ultra` only when the
+cost of being wrong exceeds the cost of the extra completions. `ultra`'s premium
+seats (fable-5, sol-pro, opus-4.8) are for irreversible/high-stakes work; for
+medium-high complexity use `intelligence` (frontier voices without the premium
+tax).

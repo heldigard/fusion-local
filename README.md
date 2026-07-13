@@ -91,7 +91,8 @@ fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
 fusion --preset mixed "<Q>"                   # always run subs + default PAYG panel
 fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
-fusion --preset ultra --current-model "$MODEL" "<Q>"
+fusion --preset intelligence "<Q>"            # frontier-accessible (medium-high complexity)
+fusion --preset ultra --current-model "$MODEL" "<Q>"  # full frontier (high-stakes only)
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --panel "anthropic/claude-opus-latest,openai/gpt-latest" "<Q>"
@@ -162,11 +163,38 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
 - **Mixed preset**: all configured subscription workers plus the default PAYG panel.
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
-- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.5-pro`,
-  `~google/gemini-pro-latest`. GPT-5.6 is GA in OpenAI/Codex, but no OpenRouter
-  GPT-5.6 ID is used until its provider-specific catalog is verified.
+- **Intelligence preset**: `x-ai/grok-4.5`, `~google/gemini-pro-latest`,
+  `openai/gpt-5.6-terra`, `deepseek/deepseek-v4-pro`. Frontier-accessible, 4
+  families, NO premium $25–50/M seats — for medium-high complexity without the
+  ultra tax (~5x cheaper than ultra).
+- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.6-sol-pro`,
+  `~google/gemini-pro-latest`, `x-ai/grok-4.5`. GPT-5.6 Sol Pro and Grok 4.5
+  verified in the live OpenRouter catalog (2026-07-12); legacy `gpt-5.5-pro`
+  dropped. Gemini stays on the `~google/gemini-pro-latest` alias (no pinned pro
+  ID is exposed beyond it).
 - **Judge**: `deepseek/deepseek-v4-flash` (BYOK $0, 1M ctx) via cheap_llm cascade.
 - **Current-model exclusion**: pass `--current-model`, or set `FUSION_CURRENT_MODEL`,
   `CONTROLLER_MODEL`, `CODEX_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`, or `QWEN_MODEL`.
   Matching panelists are skipped and reported in `sources[]` so the controller does not
   ask the same model to validate itself.
+
+## Preset selection by complexity
+
+Cost is output $/M tokens (live OpenRouter, 2026-07-12). The controller decides
+when to invoke fusion and which preset fits the stakes — fusion itself never
+auto-invokes. Pick the cheapest panel whose downside-risk you can tolerate.
+
+| Preset | Seats | Output $/M | Use when | Avoid when |
+|---|---|---|---|---|
+| `subs` | 4 | $0 | default first pass; subs quota available | quota exhausted / no `FUSION_ROUTER` |
+| `cheap` | 4 | $0.15–1.28 | low-stakes sanity check, routine second opinion | irreversible / security / architecture |
+| `payg` | 2 | $0.87–3.75 | general deliberation, open-capable diversity | need frontier reasoning depth |
+| `intelligence` | 4 | $6–15 | medium-high: design tradeoffs, hard bugs, unfamiliar APIs | trivial (waste) or irreversible (use ultra) |
+| `ultra` | 5 | $6–50 | HIGH-STAKES: migrations, security/auth, prod, irreversible architecture | reversible / low-complexity — premium seats burn budget |
+| `mixed` | 6 | $0–3.75 | subs diversity AND a PAYG floor | tight cost budget |
+
+**Rule of thumb:** escalate `cheap → payg → intelligence → ultra` only when the
+cost of being wrong exceeds the cost of the extra completions. `ultra`'s premium
+seats (fable-5, sol-pro, opus-4.8) are for irreversible/high-stakes work; for
+medium-high complexity use `intelligence` (frontier voices without the premium
+tax).

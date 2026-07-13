@@ -47,8 +47,12 @@ PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
 PANEL_SUBS_ENV = "FUSION_PANEL_SUBS"
 
 # Lane 2: PAYG fallback (HTTP direct, OpenRouter) — universal cross-CLI. PAYG
-# stays strong but economical; cheap/ultra presets are explicit so the controller
-# can pick cost vs depth intentionally.
+# stays strong but economical; cheap/intelligence/ultra presets are explicit so
+# the controller can pick cost vs depth intentionally. Cost tiers (output $/M):
+#   cheap       ~$0.15-1.28  — economical open models
+#   payg        ~$0.87-3.75  — open capable (default deliberation)
+#   intelligence ~$6-15      — frontier-accessible, NO premium $25-50/M seats
+#   ultra        ~$6-50      — full frontier incl. premium closed (fable/sol-pro/opus)
 PANEL_PAYG: list[tuple[str, str, str, str]] = [
     ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
     ("qwen3.7-max", OPENROUTER_URL, "qwen/qwen3.7-max", OPENROUTER_KEY_ENV),
@@ -64,17 +68,31 @@ PANEL_CHEAP: list[tuple[str, str, str, str]] = [
 PANEL_ULTRA: list[tuple[str, str, str, str]] = [
     ("claude-fable-5", OPENROUTER_URL, "anthropic/claude-fable-5", OPENROUTER_KEY_ENV),
     ("claude-opus-4.8", OPENROUTER_URL, "anthropic/claude-opus-4.8", OPENROUTER_KEY_ENV),
-    ("gpt-5.5-pro", OPENROUTER_URL, "openai/gpt-5.5-pro", OPENROUTER_KEY_ENV),
+    ("gpt-5.6-sol-pro", OPENROUTER_URL, "openai/gpt-5.6-sol-pro", OPENROUTER_KEY_ENV),
     ("gemini-pro-latest", OPENROUTER_URL, "~google/gemini-pro-latest", OPENROUTER_KEY_ENV),
+    ("grok-4.5", OPENROUTER_URL, "x-ai/grok-4.5", OPENROUTER_KEY_ENV),
+]
+
+# Intelligence: frontier-accessible panel for medium-high complexity. 4 families
+# (xAI, Google, OpenAI, DeepSeek), all frontier/open-capable, deliberately
+# EXCLUDING the premium closed seats (claude-fable-5 $50, gpt-5.6-sol-pro $30,
+# claude-opus-4.8 $25 per M output) that ultra reserves for high-stakes work.
+# Roughly 5x cheaper than ultra per deliberation while keeping 2 frontier voices.
+PANEL_INTELLIGENCE: list[tuple[str, str, str, str]] = [
+    ("grok-4.5", OPENROUTER_URL, "x-ai/grok-4.5", OPENROUTER_KEY_ENV),
+    ("gemini-pro-latest", OPENROUTER_URL, "~google/gemini-pro-latest", OPENROUTER_KEY_ENV),
+    ("gpt-5.6-terra", OPENROUTER_URL, "openai/gpt-5.6-terra", OPENROUTER_KEY_ENV),
+    ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
 ]
 
 PAYG_PRESETS: dict[str, list[Spec]] = {
     "payg": PANEL_PAYG,
     "cheap": PANEL_CHEAP,
+    "intelligence": PANEL_INTELLIGENCE,
     "ultra": PANEL_ULTRA,
 }
 
-PANEL_PRESETS: tuple[str, ...] = ("subs", "payg", "cheap", "ultra", "mixed")
+PANEL_PRESETS: tuple[str, ...] = ("subs", "payg", "cheap", "intelligence", "ultra", "mixed")
 
 SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "codex-spark": ("gpt-5.6-terra", "openai/gpt-5.6-terra"),
@@ -86,13 +104,12 @@ SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
 MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "~google/gemini-pro-latest": (
         "google/gemini-pro-latest",
-        "google/gemini-3.5-pro",
         "gemini-pro-latest",
-        "gemini-3.5-pro",
     ),
     "anthropic/claude-opus-4.8": ("claude-opus-4-8", "claude-opus-4.8"),
     "anthropic/claude-fable-5": ("claude-fable-5",),
-    "openai/gpt-5.5-pro": ("gpt-5.5-pro",),
+    "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol", "gpt-5.6"),
+    "x-ai/grok-4.5": ("grok-4.5", "grok-4-5", "grok-4.5-20260708"),
     "deepseek/deepseek-v4-pro": ("deepseek-v4-pro",),
     "deepseek/deepseek-v4-flash": ("deepseek-v4-flash",),
     "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max"),
@@ -451,11 +468,12 @@ def run_panel(
     """Run the deliberation panel. Successful outputs first, failures after.
 
     preset:
-      - "subs"  : lane 1 only ($0 subscription). Fallback to lane 2 if < min_workers succeed.
-      - "payg"  : lane 2 only (universal PAYG HTTP direct).
-      - "cheap" : low-cost OpenRouter lane 2 panel.
-      - "ultra" : strongest verified OpenRouter lane 2 panel.
-      - "mixed" : always run lane 1 and the default PAYG lane 2 panel.
+      - "subs"        : lane 1 only ($0 subscription). Fallback to lane 2 if < min_workers succeed.
+      - "payg"        : lane 2 only (universal PAYG HTTP direct).
+      - "cheap"       : low-cost OpenRouter lane 2 panel.
+      - "intelligence": frontier-accessible lane 2 panel (no premium $25-50/M seats).
+      - "ultra"       : strongest verified OpenRouter lane 2 panel (full frontier).
+      - "mixed"       : always run lane 1 and the default PAYG lane 2 panel.
     """
     require_nonempty_string("task", task)
     if preset not in PANEL_PRESETS:

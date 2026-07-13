@@ -120,7 +120,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--preset",
         choices=PANEL_PRESETS,
         default="subs",
-        help="Panel source: subs ($0 subs workers, default), payg, cheap, ultra, mixed.",
+        help="Panel source: subs ($0, default), payg, cheap, intelligence, ultra, mixed.",
     )
     parser.add_argument(
         "--cloud-model",

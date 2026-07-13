@@ -128,9 +128,43 @@ def test_panel_ultra_uses_verified_frontier_models() -> None:
     check("ultra preset calls all ultra workers", len(ok) == len(panel_mod.PANEL_ULTRA), str(res))
     check("ultra includes fable", "anthropic/claude-fable-5" in calls, str(calls))
     check("ultra includes opus", "anthropic/claude-opus-4.8" in calls, str(calls))
-    check("ultra includes gpt verified fallback", "openai/gpt-5.5-pro" in calls, str(calls))
-    check("ultra excludes nonexistent gpt-5.6", "openai/gpt-5.6" not in calls, str(calls))
+    check("ultra includes gpt 5.6 sol pro", "openai/gpt-5.6-sol-pro" in calls, str(calls))
+    check("ultra excludes legacy gpt-5.5-pro", "openai/gpt-5.5-pro" not in calls, str(calls))
+    check("ultra includes grok 4.5", "x-ai/grok-4.5" in calls, str(calls))
     check("ultra uses gemini pro latest alias", "~google/gemini-pro-latest" in calls, str(calls))
+
+
+def test_panel_intelligence_uses_frontier_accessible_no_premium() -> None:
+    calls: list[str] = []
+
+    def fake_http(spec, _task, _timeout):
+        calls.append(spec[2])
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        res = panel_mod.run_panel("task", preset="intelligence")
+    ok = [r for r in res if r["success"]]
+    check(
+        "intelligence calls all intelligence workers",
+        len(ok) == len(panel_mod.PANEL_INTELLIGENCE),
+        str(res),
+    )
+    check("intelligence includes grok 4.5", "x-ai/grok-4.5" in calls, str(calls))
+    check(
+        "intelligence includes gemini pro latest", "~google/gemini-pro-latest" in calls, str(calls)
+    )
+    check("intelligence includes gpt 5.6 terra", "openai/gpt-5.6-terra" in calls, str(calls))
+    check("intelligence includes deepseek v4 pro", "deepseek/deepseek-v4-pro" in calls, str(calls))
+    # Intelligence deliberately excludes the premium closed seats ultra reserves
+    # for high-stakes work (fable $50, sol-pro $30, opus $25 per M output).
+    check("intelligence excludes fable 5", "anthropic/claude-fable-5" not in calls, str(calls))
+    check(
+        "intelligence excludes gpt 5.6 sol pro", "openai/gpt-5.6-sol-pro" not in calls, str(calls)
+    )
+    check("intelligence excludes opus 4.8", "anthropic/claude-opus-4.8" not in calls, str(calls))
 
 
 def test_panel_mixed_always_runs_both_lanes() -> None:
@@ -275,7 +309,7 @@ def test_current_model_1m_suffix_matches_panel_seat() -> None:
     seat = ("claude-fable-5", panel_mod.OPENROUTER_URL, "anthropic/claude-fable-5", "K")
     matched = panel_mod._matches_current_model(seat, "claude-fable-5[1m]")
     check("[1m] suffix does not defeat panel de-dup", matched, str(matched))
-    unrelated = ("gpt-5.5-pro", panel_mod.OPENROUTER_URL, "openai/gpt-5.5-pro", "K")
+    unrelated = ("gpt-5.6-sol-pro", panel_mod.OPENROUTER_URL, "openai/gpt-5.6-sol-pro", "K")
     check(
         "unrelated seat still allowed",
         not panel_mod._matches_current_model(unrelated, "claude-fable-5[1m]"),
@@ -490,9 +524,7 @@ def test_judge_degrades_on_transport_exception() -> None:
     def fail_transport(*_args, **_kwargs):
         raise TimeoutError("SECRET_MARKER\n" + ("x" * 400))
 
-    panel = [
-        {"source": "x", "lane": "payg", "success": True, "output": "panel answer"}
-    ]
+    panel = [{"source": "x", "lane": "payg", "success": True, "output": "panel answer"}]
     with patch("cheap_llm.cheap_complete", fail_transport):
         jd = judge_mod.run_judge("task", panel, cloud_model="judge/model")
     check("transport failure keeps five fields", all(k in jd for k in judge_mod.FUSION_FIELDS))
@@ -550,8 +582,11 @@ def test_payg_model_ids_are_current_shape() -> None:
     ultra_ids = {spec[2] for spec in panel_mod.PANEL_ULTRA}
     check("ultra opus 4.8 present", "anthropic/claude-opus-4.8" in ultra_ids, str(ultra_ids))
     check("ultra fable 5 present", "anthropic/claude-fable-5" in ultra_ids, str(ultra_ids))
-    check("ultra uses verified gpt 5.5 pro", "openai/gpt-5.5-pro" in ultra_ids, str(ultra_ids))
-    check("ultra avoids unverified gpt 5.6", "openai/gpt-5.6" not in ultra_ids, str(ultra_ids))
+    check(
+        "ultra uses verified gpt 5.6 sol pro", "openai/gpt-5.6-sol-pro" in ultra_ids, str(ultra_ids)
+    )
+    check("ultra drops legacy gpt 5.5 pro", "openai/gpt-5.5-pro" not in ultra_ids, str(ultra_ids))
+    check("ultra includes grok 4.5", "x-ai/grok-4.5" in ultra_ids, str(ultra_ids))
     check(
         "ultra uses gemini pro latest alias",
         "~google/gemini-pro-latest" in ultra_ids,
@@ -561,6 +596,36 @@ def test_payg_model_ids_are_current_shape() -> None:
         "ultra avoids unverified gemini 3.5 pro id",
         "google/gemini-3.5-pro" not in ultra_ids,
         str(ultra_ids),
+    )
+    intel_ids = {spec[2] for spec in panel_mod.PANEL_INTELLIGENCE}
+    check("intelligence includes grok 4.5", "x-ai/grok-4.5" in intel_ids, str(intel_ids))
+    check(
+        "intelligence includes gemini pro latest",
+        "~google/gemini-pro-latest" in intel_ids,
+        str(intel_ids),
+    )
+    check(
+        "intelligence includes gpt 5.6 terra", "openai/gpt-5.6-terra" in intel_ids, str(intel_ids)
+    )
+    check(
+        "intelligence includes deepseek v4 pro",
+        "deepseek/deepseek-v4-pro" in intel_ids,
+        str(intel_ids),
+    )
+    check(
+        "intelligence excludes premium fable 5",
+        "anthropic/claude-fable-5" not in intel_ids,
+        str(intel_ids),
+    )
+    check(
+        "intelligence excludes premium gpt 5.6 sol pro",
+        "openai/gpt-5.6-sol-pro" not in intel_ids,
+        str(intel_ids),
+    )
+    check(
+        "intelligence registered in presets",
+        "intelligence" in panel_mod.PANEL_PRESETS,
+        str(panel_mod.PANEL_PRESETS),
     )
 
 
@@ -601,8 +666,7 @@ def test_run_lane_isolates_non_dict_result() -> None:
     check(
         "run_lane records per-source duration",
         all(
-            isinstance(r.get("duration_seconds"), float) and r["duration_seconds"] >= 0
-            for r in res
+            isinstance(r.get("duration_seconds"), float) and r["duration_seconds"] >= 0 for r in res
         ),
         str(res),
     )
@@ -937,8 +1001,7 @@ def test_cli_capabilities_contract() -> None:
     )
     check(
         "hosted raw JSON contract named",
-        by_name["openrouter"]["output_contracts"]["json"]
-        == "openrouter-chat-completion-v1",
+        by_name["openrouter"]["output_contracts"]["json"] == "openrouter-chat-completion-v1",
     )
     check(
         "health exposes cheap_llm",
