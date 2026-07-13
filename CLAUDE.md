@@ -23,11 +23,13 @@ outer OpenRouter model consumes its internal Fusion analysis and returns assista
 
 ```
 src/fusion/
-├── _boundary.py   shared validation/error/scrub contracts
-├── _version.py    canonical runtime version
-├── config.py       constants + cross-CLI wiring (FUSION_ROUTER, cheap_llm bootstrap)
-├── panel.py        feature: lane-1 (cworker subs) + lane-2 (HTTP PAYG) + orchestration
-├── judge.py        feature: 5-field schema + cheap_llm judge synthesis
+├── _boundary.py     shared validation/error/scrub contracts
+├── _version.py      canonical runtime version
+├── config.py        constants + cross-CLI wiring (FUSION_ROUTER, cheap_llm bootstrap)
+├── panel_models.py  model catalog: types, presets, MODEL_ALIASES, WORKER_GUARD (pure data)
+├── panel_current.py current-controller detection + panel-seat exclusion/matching
+├── panel.py         lane-1/lane-2 runners + orchestration (re-exports catalog & detection)
+├── judge.py         feature: 5-field schema + cheap_llm judge synthesis
 ├── delegate.py     feature: legacy OpenRouter hosted fusion (--openrouter)
 ├── cli.py          feature: fuse() + main() + FuseOptions (parameter object)
 └── __init__.py     public API (fuse, run_panel, run_judge, FuseOptions, main, ...)
@@ -131,8 +133,10 @@ fusion --version
 
 ## Conventions
 
-- **Vertical-slice**: feature-per-module (config/panel/judge/delegate/cli), with small
-  shared `_boundary` and `_version` contract modules.
+- **Vertical-slice**: feature-per-module (config/panel_models/panel_current/panel/judge/
+  delegate/cli), with small shared `_boundary` and `_version` contract modules. `panel.py`
+  is the execution module + facade: it re-exports `panel_models`/`panel_current` public
+  names so `from fusion.panel import X` (and `panel_mod.*` in tests) is unchanged.
 - `FuseOptions` dataclass — parameter object (keeps `fuse()` arity ≤ 5).
 - **Secret scrub on all external paths**: judge unconditionally inside cheap_llm;
   panel and hosted delegate fail closed before external dispatch.
