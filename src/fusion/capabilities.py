@@ -159,7 +159,7 @@ def _cap(name: str, purpose: str, **overrides: Any) -> dict[str, Any]:
 def _preset_details() -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {
         "subs": {
-            "lanes": ["subscription"],
+            "lanes": ["subscription", "payg-fallback"],
             "nominal_seats": len(PANEL_SUBS),
             "fallback": "default PAYG only when successful subscription seats are below quorum",
         },
@@ -199,6 +199,6 @@ def _live_probes() -> dict[str, Any]:
     return {
         "cheap_llm_ok": gate["ok"],
         "cheap_llm_version": gate["version"],
-        "router_available": bool(config.ROUTER and config.ROUTER.exists()),
+        "router_available": bool(config.ROUTER and config.ROUTER.is_file()),
         "openrouter_key_present": bool(os.environ.get("OPENROUTER_API_KEY", "").strip()),
     }

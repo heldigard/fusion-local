@@ -444,6 +444,24 @@ def test_http_worker_rejects_non_string_content() -> None:
     check("non-string HTTP content is malformed", result["error"] == "malformed response")
 
 
+def test_safe_usage_allows_only_nonnegative_numeric_metrics() -> None:
+    usage = panel_mod._safe_usage(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 5.0,
+            "total_tokens": True,
+            "cost": -1,
+            "prompt": "must never escape",
+        }
+    )
+    check(
+        "usage retains safe token counters",
+        usage == {"prompt_tokens": 10, "completion_tokens": 5.0},
+        str(usage),
+    )
+    check("usage drops arbitrary provider fields", "prompt" not in usage, str(usage))
+
+
 def test_http_worker_rejects_oversized_response() -> None:
     with (
         patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
@@ -532,6 +550,20 @@ def test_judge_keeps_untrusted_panel_text_out_of_system_prompt() -> None:
     check("adversarial panel text not in system", marker not in seen["system"], seen["system"])
     check("adversarial panel text stays in data prompt", marker in seen["prompt"])
     check("isolated judge prompt remains valid", result["judge_valid"] is True, str(result))
+
+
+def test_judge_bounds_each_untrusted_panel_record() -> None:
+    prompt = judge_mod._judge_data_prompt(
+        "task",
+        [{"source": "x", "lane": "payg", "output": "z" * (judge_mod.MAX_PANEL_OUTPUT_CHARS + 50)}],
+    )
+    payload = json.loads(prompt.split("\n", 1)[1])
+    record = payload["panel_records"][0]
+    check(
+        "judge panel record is bounded",
+        len(record["output"]) == judge_mod.MAX_PANEL_OUTPUT_CHARS,
+    )
+    check("judge panel record marks truncation", record["truncated"] is True, str(record))
 
 
 def test_judge_graceful_on_invalid_json() -> None:
@@ -1420,6 +1452,10 @@ TESTS = [
     ("cworker_rejects_oversized_stdout", test_cworker_rejects_oversized_stdout),
     ("panel_public_errors_hide_untrusted_details", test_panel_public_errors_hide_untrusted_details),
     ("http_worker_rejects_non_string_content", test_http_worker_rejects_non_string_content),
+    (
+        "safe_usage_allows_only_nonnegative_numeric_metrics",
+        test_safe_usage_allows_only_nonnegative_numeric_metrics,
+    ),
     ("http_worker_rejects_oversized_response", test_http_worker_rejects_oversized_response),
     ("http_worker_rejects_invalid_utf8", test_http_worker_rejects_invalid_utf8),
     ("judge_parses_5field", test_judge_parses_5field),
@@ -1427,6 +1463,7 @@ TESTS = [
         "judge_keeps_untrusted_panel_text_out_of_system_prompt",
         test_judge_keeps_untrusted_panel_text_out_of_system_prompt,
     ),
+    ("judge_bounds_each_untrusted_panel_record", test_judge_bounds_each_untrusted_panel_record),
     ("judge_graceful_on_invalid_json", test_judge_graceful_on_invalid_json),
     ("judge_rejects_missing_schema_fields", test_judge_rejects_missing_schema_fields),
     ("judge_accepts_empty_schema_arrays", test_judge_accepts_empty_schema_arrays),

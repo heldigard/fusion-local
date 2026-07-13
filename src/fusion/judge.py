@@ -16,7 +16,6 @@ from ._boundary import public_error, require_nonempty_string, require_positive_i
 # Importing CHEAP_LLM_HOME from config triggers the cheap_llm sys.path bootstrap
 # (idempotent side-effect in fusion.config) so the lazy `import cheap_llm` below resolves.
 from .config import CHEAP_LLM_HOME  # noqa: F401
-from .panel import summarize as _summarize_panel
 
 DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"  # BYOK $0, 1M ctx
 MAX_PANEL_OUTPUT_CHARS = 64_000
@@ -108,15 +107,17 @@ def run_judge(
     require_positive_int("timeout", timeout)
     require_positive_int("min_outputs", min_outputs)
 
-    summary = _summarize_panel(panel_results)
-    if not summary:
+    output_count = sum(
+        isinstance(result.get("output"), str) and bool(result["output"].strip())
+        for result in panel_results
+    )
+    if not output_count:
         return empty_fields(
             judge_model=None,
             judge_valid=False,
             error="no panel outputs to judge",
             sources=[],
         )
-    output_count = sum(bool(result.get("output")) for result in panel_results)
     if output_count < min_outputs:
         return empty_fields(
             consensus="Insufficient panel quorum; use panel_evidence for the available raw signal.",
@@ -246,8 +247,8 @@ def _panel_evidence(panel_results: list[dict[str, Any]]) -> list[dict[str, Any]]
     """Preserve successful panel signal when judge synthesis fails."""
     evidence: list[dict[str, Any]] = []
     for result in panel_results:
-        output = str(result.get("output") or "")
-        if output:
+        output = result.get("output")
+        if isinstance(output, str) and output:
             evidence.append(_evidence_item(result, output))
     return evidence
 
