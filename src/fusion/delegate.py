@@ -217,7 +217,7 @@ def main() -> int:
 
     try:
         key = _require_key()
-        prompt = _scrub_prompt(nonempty_arg(args.prompt))
+        prompt = _scrub_prompt(args.prompt)
         payload = _build_payload(args, prompt=prompt)
         result = _call(payload, key, timeout_s=args.timeout)
         text = _extract_text(result)

@@ -89,10 +89,13 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "~google/gemini-pro-latest": (
         "google/gemini-pro-latest",
         "gemini-pro-latest",
+        "gemini-3.5-pro",
+        "google/gemini-3.5-pro",
     ),
     "anthropic/claude-opus-4.8": ("claude-opus-4-8", "claude-opus-4.8", "opus"),
     "anthropic/claude-fable-5": ("claude-fable-5", "fable", "default"),
     "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol"),
+    "openai/gpt-5.6-terra": ("gpt-5.6-terra", "gpt-5.6-terra-1m", "terra"),
     "x-ai/grok-4.5": ("grok-4.5", "grok-4-5", "grok-4.5-20260708"),
     "deepseek/deepseek-v4-pro": ("deepseek-v4-pro",),
     "deepseek/deepseek-v4-flash": ("deepseek-v4-flash",),
@@ -100,6 +103,9 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "qwen/qwen3.7-plus": ("qwen3.7-plus", "qwen/qwen3.7-plus"),
     "minimax/minimax-m3": ("minimax-m3", "minimax-3"),
     "xiaomi/mimo-v2.5-pro": ("mimo-v2.5-pro", "mimo-2.5-pro"),
+    "google/gemini-3.5-flash": ("gemini-3.5-flash", "gemini-3.5-flash-1m"),
+    "moonshotai/kimi-k2.7-code": ("kimi-k2.7-code", "kimi"),
+    "z-ai/glm-5.2": ("glm-5.2", "glm5.2", "glm"),
 }
 
 # Recursion guard — panelists answer directly, no tools / no delegation.

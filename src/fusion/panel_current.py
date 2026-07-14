@@ -57,6 +57,11 @@ def detect_current_model(explicit: str | None = None) -> str | None:
         return _claude_settings_model()
     if os.environ.get("CODEX_THREAD_ID", "").strip() or os.environ.get("CODEX_CI", "").strip():
         return _codex_settings_model()
+    if (
+        os.environ.get("ANTIGRAVITY_AGENT", "").strip().lower() in {"1", "true", "yes", "on"}
+        or os.environ.get("ANTIGRAVITY_CONVERSATION_ID", "").strip()
+    ):
+        return _gemini_settings_model()
     return None
 
 
@@ -76,6 +81,18 @@ def _codex_settings_model() -> str | None:
     except (OSError, tomllib.TOMLDecodeError):
         return None
     model = payload.get("model")
+    return model.strip() or None if isinstance(model, str) else None
+
+
+def _gemini_settings_model() -> str | None:
+    settings = Path.home() / ".gemini" / "settings.json"
+    try:
+        payload = json.loads(settings.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    model = payload.get("model")
+    if isinstance(model, dict):
+        model = model.get("name")
     return model.strip() or None if isinstance(model, str) else None
 
 

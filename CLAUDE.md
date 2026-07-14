@@ -33,6 +33,7 @@ src/fusion/
 ├── judge.py         feature: 5-field schema + cheap_llm judge synthesis
 ├── delegate.py     feature: legacy OpenRouter hosted fusion (--openrouter)
 ├── cli.py          feature: fuse() + main() + FuseOptions (parameter object)
+├── capabilities.py machine-readable capability manifest (doctor/router consumer)
 └── __init__.py     public API (fuse, run_panel, run_judge, FuseOptions, main, ...)
 tests/
 ├── test_fusion.py     panel + judge + fuse + CLI (offline, mocked)

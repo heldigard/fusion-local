@@ -344,6 +344,44 @@ def test_detect_current_model_reads_codex_settings() -> None:
     check("Codex session reads config.toml model", model == "gpt-5.6-sol", str(model))
 
 
+def test_detect_current_model_reads_gemini_settings() -> None:
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = _P(tmp)
+        settings = home / ".gemini" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('{"model": {"name": "gemini-3.5-flash"}}', encoding="utf-8")
+        with (
+            patch.dict("os.environ", {"ANTIGRAVITY_AGENT": "1"}, clear=True),
+            patch.object(panel_mod.Path, "home", staticmethod(lambda: home)),
+        ):
+            model = panel_mod.detect_current_model()
+    check(
+        "Antigravity/Gemini session reads settings.json model",
+        model == "gemini-3.5-flash",
+        str(model),
+    )
+
+
+def test_detect_current_model_reads_gemini_settings_direct_string() -> None:
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = _P(tmp)
+        settings = home / ".gemini" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('{"model": "gemini-pro-latest"}', encoding="utf-8")
+        with (
+            patch.dict("os.environ", {"ANTIGRAVITY_CONVERSATION_ID": "some-id"}, clear=True),
+            patch.object(panel_mod.Path, "home", staticmethod(lambda: home)),
+        ):
+            model = panel_mod.detect_current_model()
+    check("Gemini direct string model read", model == "gemini-pro-latest", str(model))
+
+
 def test_current_model_1m_suffix_matches_panel_seat() -> None:
     seat = ("claude-fable-5", panel_mod.OPENROUTER_URL, "anthropic/claude-fable-5", "K")
     matched = panel_mod._matches_current_model(seat, "claude-fable-5[1m]")
@@ -357,6 +395,36 @@ def test_current_model_1m_suffix_matches_panel_seat() -> None:
     check(
         "generic gpt family does not over-exclude sol-pro",
         not panel_mod._matches_current_model(unrelated, "gpt-5.6"),
+    )
+    check(
+        "codex-spark matches gpt-5.6-terra",
+        panel_mod._matches_current_model("codex-spark", "gpt-5.6-terra"),
+    )
+    check(
+        "codex-spark matches gpt-5.6-terra-1m",
+        panel_mod._matches_current_model("codex-spark", "gpt-5.6-terra-1m"),
+    )
+    check(
+        "codex-spark matches terra",
+        panel_mod._matches_current_model("codex-spark", "terra"),
+    )
+    # zai seat (z-ai/glm-5.2) and kimic seat (kimi-k2.7-code) round out the
+    # subscription panel; their exclusion aliases were added but not exercised.
+    check(
+        "zai matches glm-5.2",
+        panel_mod._matches_current_model("zai", "glm-5.2"),
+    )
+    check(
+        "zai matches glm-5.2[1m] context suffix",
+        panel_mod._matches_current_model("zai", "glm-5.2[1m]"),
+    )
+    check(
+        "kimic matches kimi-k2.7-code",
+        panel_mod._matches_current_model("kimic", "kimi-k2.7-code"),
+    )
+    check(
+        "unrelated glm does not over-exclude zai seat for non-glm current",
+        not panel_mod._matches_current_model("codex-spark", "glm-5.2"),
     )
 
 
@@ -596,9 +664,7 @@ def test_judge_cloud_only_policy_reaches_cheap_llm() -> None:
         return _fake_cheap_complete(env)(system, prompt, **kwargs)
 
     with patch("cheap_llm.cheap_complete", fake):
-        result = judge_mod.run_judge(
-            "task", [{"source": "x", "output": "y"}], prefer_local=False
-        )
+        result = judge_mod.run_judge("task", [{"source": "x", "output": "y"}], prefer_local=False)
     check("cloud-only judge remains valid", result["judge_valid"] is True, str(result))
     check("cloud-only judge skips cheap_llm T1", seen.get("prefer_local") is False, str(seen))
 
@@ -1500,6 +1566,14 @@ TESTS = [
         test_detect_current_model_reads_claude_settings,
     ),
     ("detect_current_model_reads_codex_settings", test_detect_current_model_reads_codex_settings),
+    (
+        "detect_current_model_reads_gemini_settings",
+        test_detect_current_model_reads_gemini_settings,
+    ),
+    (
+        "detect_current_model_reads_gemini_settings_direct_string",
+        test_detect_current_model_reads_gemini_settings_direct_string,
+    ),
     (
         "current_model_1m_suffix_matches_panel_seat",
         test_current_model_1m_suffix_matches_panel_seat,

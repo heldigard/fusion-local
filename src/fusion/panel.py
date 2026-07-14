@@ -371,13 +371,32 @@ def run_panel(
     require_nonempty_string("current_model", current_model, optional=True)
     task = _scrub(task)
     current_model = detect_current_model(current_model)
+
+    # "mixed" always runs BOTH lanes. They are independent (no shared mutable
+    # state, disjoint worker sets), so run them concurrently instead of waiting
+    # for lane 1 to finish before starting lane 2 — removes the sequential lane-2
+    # latency from the only preset that unconditionally pays for both. Result
+    # order stays deterministic: skips, then subscription outputs, then payg
+    # outputs, finally reordered success-first by the shared return path.
+    if preset == "mixed":
+        subs_workers, skip_subs = _without_current_model(_subs_workers(), current_model)
+        payg_workers, skip_payg = _without_current_model(
+            _payg_panel_for_preset(preset), current_model
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_subs = pool.submit(_run_lane, subs_workers, _cworker_runner, task, timeout)
+            fut_payg = pool.submit(_run_lane, payg_workers, _http_runner, task, timeout)
+            all_results = [*skip_subs, *skip_payg, *fut_subs.result(), *fut_payg.result()]
+        ok = [r for r in all_results if r.get("success") and r.get("output")]
+        return ok + [r for r in all_results if not r.get("success")]
+
     all_results: list[dict[str, Any]] = []
-    if preset in ("subs", "mixed"):
+    if preset == "subs":
         subs_workers, skipped = _without_current_model(_subs_workers(), current_model)
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
-    if preset in PAYG_PRESETS or preset == "mixed" or len(ok) < min_workers:
+    if preset in PAYG_PRESETS or len(ok) < min_workers:
         payg_workers, skipped = _without_current_model(
             _payg_panel_for_preset(preset), current_model
         )

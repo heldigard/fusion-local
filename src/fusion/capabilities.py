@@ -37,101 +37,118 @@ def capabilities_payload() -> dict[str, Any]:
     }
 
 
-def _capability_entries() -> list[dict[str, Any]]:
-    fuse_purpose = "Run a bounded multi-model panel and judge into a 5-field analysis envelope."
-    openrouter_purpose = (
-        "Delegate to the legacy hosted OpenRouter fusion path when explicitly requested."
+# Envelope field set emitted by fuse() — the machine-consumed contract
+# (cli-orchestration doctor treats this as the authoritative field list).
+# Always present: schema_version, status, preset, the five analysis fields,
+# judge_model, judge_valid, sources, panel_quorum, total_latency, total_known_cost.
+# Conditional: error + panel_evidence (degraded); current_model (controller detected).
+FUSE_ENVELOPE_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "status",
+    "preset",
+    "consensus",
+    "contradictions",
+    "coverage_gaps",
+    "unique_insights",
+    "blind_spots",
+    "judge_model",
+    "judge_valid",
+    "cost",
+    "latency",
+    "sources",
+    "panel_quorum",
+    "total_latency",
+    "total_known_cost",
+    "current_model",
+    "error",
+    "panel_evidence",
+)
+
+
+def _fuse_capability() -> dict[str, Any]:
+    purpose = "Run a bounded multi-model panel and judge into a 5-field analysis envelope."
+    return _cap(
+        "fuse",
+        purpose,
+        presets=PANEL_PRESETS,
+        invocation={
+            "cli": "fusion-local [options] PROMPT",
+            "python": "fusion.fuse(task, opts=None)",
+        },
+        inputs={
+            "prompt": "non-empty string",
+            "preset": list(PANEL_PRESETS),
+            "timeout_seconds": "positive integer",
+            "min_workers": "positive integer",
+            "cloud_model": "pinned T2 judge fallback model",
+            "cloud_judge": "boolean; skip local T1 judge when true",
+        },
+        output_contracts={"default": "fusion-readable-v1", "json": "fusion-envelope-v1"},
+        default_output_format="text",
+        output={"json_fields": list(FUSE_ENVELOPE_FIELDS)},
+        preset_details=_preset_details(),
+        prerequisites=[
+            f"cheap_llm>={CHEAP_LLM_MIN_VERSION}",
+            "available fail-closed prompt scrubber",
+        ],
+        exit_codes={"0": "strict judge result", "2": "degraded result or invalid usage"},
+        recovery=(
+            "On exit 2, inspect error and optional panel_evidence; do not treat the "
+            "analysis fields as validated unless judge_valid is true."
+        ),
     )
-    caps_purpose = "Emit this local fusion capability manifest."
-    return [
-        _cap(
-            "fuse",
-            fuse_purpose,
-            presets=PANEL_PRESETS,
-            invocation={
-                "cli": "fusion-local [options] PROMPT",
-                "python": "fusion.fuse(task, opts=None)",
-            },
-            inputs={
-                "prompt": "non-empty string",
-                "preset": list(PANEL_PRESETS),
-                "timeout_seconds": "positive integer",
-                "min_workers": "positive integer",
-                "cloud_model": "pinned T2 judge fallback model",
-                "cloud_judge": "boolean; skip local T1 judge when true",
-            },
-            output_contracts={"default": "fusion-readable-v1", "json": "fusion-envelope-v1"},
-            default_output_format="text",
-            output={
-                "json_fields": [
-                    "schema_version",
-                    "status",
-                    "consensus",
-                    "contradictions",
-                    "coverage_gaps",
-                    "unique_insights",
-                    "blind_spots",
-                    "judge_valid",
-                    "error",
-                    "panel_evidence",
-                    "panel_quorum",
-                    "total_known_cost",
-                ]
-            },
-            preset_details=_preset_details(),
-            prerequisites=[
-                f"cheap_llm>={CHEAP_LLM_MIN_VERSION}",
-                "available fail-closed prompt scrubber",
-            ],
-            exit_codes={"0": "strict judge result", "2": "degraded result or invalid usage"},
-            recovery=(
-                "On exit 2, inspect error and optional panel_evidence; do not treat the "
-                "analysis fields as validated unless judge_valid is true."
-            ),
+
+
+def _capabilities_capability() -> dict[str, Any]:
+    return _cap(
+        "capabilities",
+        "Emit this local fusion capability manifest.",
+        idempotent=True,
+        open_world=False,
+        cost="cheap",
+        invocation={"cli": "fusion-local --capabilities"},
+        inputs={},
+        output_contracts={"default": "capabilities-v1", "json": "capabilities-v1"},
+        default_output_format="json",
+        output={"schema_version": 1},
+        prerequisites=[],
+        exit_codes={"0": "manifest emitted"},
+        recovery="No external dispatch occurs; retry after correcting local runtime errors.",
+    )
+
+
+def _openrouter_capability() -> dict[str, Any]:
+    return _cap(
+        "openrouter",
+        "Delegate to the legacy hosted OpenRouter fusion path when explicitly requested.",
+        invocation={"cli": "fusion --openrouter [options] PROMPT"},
+        inputs={
+            "prompt": "non-empty string",
+            "panel": "1-8 comma-separated model identifiers",
+            "timeout_seconds": "positive integer",
+            "max_tokens": "positive integer when provided",
+        },
+        output_contracts={
+            "default": "openrouter-assistant-text",
+            "json": "openrouter-chat-completion-v1",
+        },
+        default_output_format="text",
+        output={"json_shape": "raw OpenRouter Chat Completion response"},
+        prerequisites=["OPENROUTER_API_KEY", "available fail-closed prompt scrubber"],
+        exit_codes={
+            "0": "usable assistant response",
+            "1": "missing key or unavailable prompt scrubber",
+            "2": "invalid usage or operational/provider response failure",
+        },
+        recovery=(
+            "Exit 1 requires local configuration. Exit 2 is safe to retry only when "
+            "the operation is idempotent for the caller; stdout is empty on failure."
         ),
-        _cap(
-            "capabilities",
-            caps_purpose,
-            idempotent=True,
-            open_world=False,
-            cost="cheap",
-            invocation={"cli": "fusion-local --capabilities"},
-            inputs={},
-            output_contracts={"default": "capabilities-v1", "json": "capabilities-v1"},
-            default_output_format="json",
-            output={"schema_version": 1},
-            prerequisites=[],
-            exit_codes={"0": "manifest emitted"},
-            recovery="No external dispatch occurs; retry after correcting local runtime errors.",
-        ),
-        _cap(
-            "openrouter",
-            openrouter_purpose,
-            invocation={"cli": "fusion --openrouter [options] PROMPT"},
-            inputs={
-                "prompt": "non-empty string",
-                "panel": "1-8 comma-separated model identifiers",
-                "timeout_seconds": "positive integer",
-                "max_tokens": "positive integer when provided",
-            },
-            output_contracts={
-                "default": "openrouter-assistant-text",
-                "json": "openrouter-chat-completion-v1",
-            },
-            default_output_format="text",
-            output={"json_shape": "raw OpenRouter Chat Completion response"},
-            prerequisites=["OPENROUTER_API_KEY", "available fail-closed prompt scrubber"],
-            exit_codes={
-                "0": "usable assistant response",
-                "1": "missing key or unavailable prompt scrubber",
-                "2": "invalid usage or operational/provider response failure",
-            },
-            recovery=(
-                "Exit 1 requires local configuration. Exit 2 is safe to retry only when "
-                "the operation is idempotent for the caller; stdout is empty on failure."
-            ),
-        ),
-    ]
+    )
+
+
+def _capability_entries() -> list[dict[str, Any]]:
+    return [_fuse_capability(), _capabilities_capability(), _openrouter_capability()]
 
 
 def _cap(name: str, purpose: str, **overrides: Any) -> dict[str, Any]:

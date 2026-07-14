@@ -17,3 +17,10 @@ _e2e_*
 .memory-bank/agent-sessions.md
 .memory-bank/topics/agent-sessions.md
 .memory-bank/blocked-writes.log
+
+# Test/coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
