@@ -160,6 +160,7 @@ def run_judge(
             cloud_model=cloud_model,
             prefer_local=prefer_local,
             require_json=True,
+            max_output_tokens=2048,  # 5-field deliberation can exceed the 1024 default
         )
     except Exception as exc:  # noqa: BLE001 — preserve the already-gathered panel signal
         return empty_fields(
