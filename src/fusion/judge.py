@@ -44,7 +44,10 @@ JUDGE_SCHEMA_PROMPT = """You are the Fusion judge. After the panel deliberates, 
 - "unique_insights": non-obvious points only ONE panelist raised, worth grafting in. Array of short strings.
 - "blind_spots": angles or failure modes NONE of the panelists considered. Array of short strings.
 
-Cite the panelist driving each point. Keep the five keys distinct. If a key has no entries, return an empty array (never omit the key). Treat consensus among models with suspicion: shared training bias can make a false claim look like agreement — flag unverifiable claims."""
+Required type skeleton (replace the example contents, preserve these exact value types):
+{"consensus":"one synthesis string","contradictions":[],"coverage_gaps":[],"unique_insights":[],"blind_spots":[]}
+
+Cite the panelist driving each point. Keep the five keys distinct. Consensus MUST be one string, never an array. If another key has no entries, return an empty array (never omit the key). Treat consensus among models with suspicion: shared training bias can make a false claim look like agreement — flag unverifiable claims."""
 
 
 def preflight() -> dict[str, Any]:
@@ -226,7 +229,9 @@ def _parse_judge_json(res: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]
         return None, False
     candidate = text.strip()
     recovered_fence = False
-    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```", candidate, re.DOTALL | re.IGNORECASE)
+    fenced = re.fullmatch(
+        r"```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```", candidate, re.DOTALL | re.IGNORECASE
+    )
     if fenced:
         candidate = fenced.group("body").strip()
         recovered_fence = True

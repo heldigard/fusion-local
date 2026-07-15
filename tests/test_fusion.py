@@ -607,6 +607,17 @@ def _fake_cheap_complete(
     return lambda system, prompt, **kw: payload
 
 
+def test_judge_prompt_pins_consensus_to_string() -> None:
+    check(
+        "judge schema pins consensus to string",
+        '"consensus":"one synthesis string"' in judge_mod.JUDGE_SCHEMA_PROMPT,
+    )
+    check(
+        "judge schema rejects consensus arrays",
+        "never an array" in judge_mod.JUDGE_SCHEMA_PROMPT,
+    )
+
+
 def test_judge_parses_5field() -> None:
     env = {
         "consensus": "C",
@@ -805,7 +816,11 @@ def test_payg_model_ids_are_current_shape() -> None:
     qwen = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("qwen")]
     check("qwen payg model present", len(qwen) == 1, str(qwen))
     canonical = [spec[0].removesuffix("-di") for spec in panel_mod.PANEL_PAYG]
-    check("payg quorum seats are unique models", len(canonical) == len(set(canonical)), str(canonical))
+    check(
+        "payg quorum seats are unique models",
+        len(canonical) == len(set(canonical)),
+        str(canonical),
+    )
     check("qwen model uses canonical openrouter id", qwen[0][2] == "qwen/qwen3.7-max")
     cheap_ids = {spec[2] for spec in panel_mod.PANEL_CHEAP}
     check("cheap deepseek is flash", "deepseek-ai/DeepSeek-V4-Flash" in cheap_ids, str(cheap_ids))
@@ -1615,6 +1630,7 @@ TESTS = [
     ),
     ("http_worker_rejects_oversized_response", test_http_worker_rejects_oversized_response),
     ("http_worker_rejects_invalid_utf8", test_http_worker_rejects_invalid_utf8),
+    ("judge_prompt_pins_consensus_to_string", test_judge_prompt_pins_consensus_to_string),
     ("judge_parses_5field", test_judge_parses_5field),
     ("judge_accepts_single_fenced_json_object", test_judge_accepts_single_fenced_json_object),
     (

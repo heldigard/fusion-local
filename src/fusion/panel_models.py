@@ -100,8 +100,16 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol"),
     "openai/gpt-5.6-terra": ("gpt-5.6-terra", "gpt-5.6-terra-1m", "terra"),
     "x-ai/grok-4.5": ("grok-4.5", "grok-4-5", "grok-4.5-20260708"),
-    "deepseek/deepseek-v4-pro": ("deepseek-v4-pro", "deepseek-v4-pro-di", "deepseek-ai/DeepSeek-V4-Pro"),
-    "deepseek/deepseek-v4-flash": ("deepseek-v4-flash", "deepseek-v4-flash-di", "deepseek-ai/DeepSeek-V4-Flash"),
+    "deepseek/deepseek-v4-pro": (
+        "deepseek-v4-pro",
+        "deepseek-v4-pro-di",
+        "deepseek-ai/DeepSeek-V4-Pro",
+    ),
+    "deepseek/deepseek-v4-flash": (
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-di",
+        "deepseek-ai/DeepSeek-V4-Flash",
+    ),
     "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max", "qwen3.7-max-di", "Qwen/Qwen3.7-Max"),
     "qwen/qwen3.7-plus": ("qwen3.7-plus", "qwen/qwen3.7-plus"),
     "minimax/minimax-m3": ("minimax-m3", "minimax-3"),

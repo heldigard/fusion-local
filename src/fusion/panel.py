@@ -386,9 +386,9 @@ def run_panel(
         with ThreadPoolExecutor(max_workers=2) as pool:
             fut_subs = pool.submit(_run_lane, subs_workers, _cworker_runner, task, timeout)
             fut_payg = pool.submit(_run_lane, payg_workers, _http_runner, task, timeout)
-            all_results = [*skip_subs, *skip_payg, *fut_subs.result(), *fut_payg.result()]
-        ok = [r for r in all_results if r.get("success") and r.get("output")]
-        return ok + [r for r in all_results if not r.get("success")]
+            mixed_results = [*skip_subs, *skip_payg, *fut_subs.result(), *fut_payg.result()]
+        ok = [r for r in mixed_results if r.get("success") and r.get("output")]
+        return ok + [r for r in mixed_results if not r.get("success")]
 
     all_results: list[dict[str, Any]] = []
     if preset == "subs":
