@@ -9,6 +9,7 @@ spots). ``cheap_complete`` validates the 5 required keys via ``schema_hint``.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from ._boundary import public_error, require_nonempty_string, require_positive_int
@@ -35,7 +36,7 @@ FUSION_FIELDS: tuple[str, ...] = (
 )
 
 # JSON variant of OpenRouter Fusion's JUDGE_SCHEMA_PROMPT (same 5 fields).
-JUDGE_SCHEMA_PROMPT = """You are the Fusion judge. After the panel deliberates, return your analysis as a JSON object with EXACTLY these five keys (no extra prose outside the JSON):
+JUDGE_SCHEMA_PROMPT = """You are the Fusion judge. After the panel deliberates, return your analysis as a JSON object with EXACTLY these five keys (no extra prose and no Markdown/code fences):
 
 - "consensus": what ALL or MOST panelists agreed on (high-confidence; treat as near-fact). String.
 - "contradictions": where panelists disagreed; for each, name WHICH panelist said WHAT. Array of short strings.
@@ -184,7 +185,7 @@ def run_judge(
             panel_evidence=_panel_evidence(panel_results),
         )
 
-    parsed = _parse_judge_json(res)
+    parsed, recovered_fence = _parse_judge_json(res)
     if not isinstance(parsed, dict):
         raw_text = str(res.get("text", "") or "").strip()
         return empty_fields(
@@ -196,7 +197,7 @@ def run_judge(
             error="judge output not valid JSON",
             panel_evidence=_panel_evidence(panel_results),
         )
-    if not (res.get("fields_ok") is True and _has_fusion_schema(parsed)):
+    if not (_has_fusion_schema(parsed) and (res.get("fields_ok") is True or recovered_fence)):
         return empty_fields(
             consensus="Judge returned JSON that failed the required fusion schema; use panel_evidence for raw model signal.",
             judge_model=res.get("model"),
@@ -218,14 +219,24 @@ def run_judge(
     return out
 
 
-def _parse_judge_json(res: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract a dict from the cheap_complete result, or None on failure."""
-    if not (res.get("json_valid") is True and res.get("text")):
-        return None
+def _parse_judge_json(res: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    """Extract strict JSON, recovering one exact Markdown JSON fence when needed."""
+    text = res.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None, False
+    candidate = text.strip()
+    recovered_fence = False
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(?P<body>.*)\r?\n```", candidate, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        candidate = fenced.group("body").strip()
+        recovered_fence = True
+    elif res.get("json_valid") is not True:
+        return None, False
     try:
-        return json.loads(res["text"], object_pairs_hook=_unique_object)
+        parsed = json.loads(candidate, object_pairs_hook=_unique_object)
     except (json.JSONDecodeError, TypeError, ValueError):
-        return None
+        return None, recovered_fence
+    return parsed if isinstance(parsed, dict) else None, recovered_fence
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -17,6 +17,9 @@ LaneWorker = TypeVar("LaneWorker", str, Spec)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
+DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
+DEEPINFRA_KEY_ENV = "DEEPINFRA_API_KEY"
+
 # Lane 1: $0 subscription workers, diverse families. Routed via config.ROUTER
 # (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm).
 PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
@@ -38,7 +41,7 @@ PANEL_PAYG: list[tuple[str, str, str, str]] = [
 ]
 
 PANEL_CHEAP: list[tuple[str, str, str, str]] = [
-    ("deepseek-v4-flash", OPENROUTER_URL, "deepseek/deepseek-v4-flash", OPENROUTER_KEY_ENV),
+    ("deepseek-v4-flash-di", DEEPINFRA_URL, "deepseek-ai/DeepSeek-V4-Flash", DEEPINFRA_KEY_ENV),
     ("qwen3.7-plus", OPENROUTER_URL, "qwen/qwen3.7-plus", OPENROUTER_KEY_ENV),
     ("minimax-m3", OPENROUTER_URL, "minimax/minimax-m3", OPENROUTER_KEY_ENV),
     ("mimo-v2.5-pro", OPENROUTER_URL, "xiaomi/mimo-v2.5-pro", OPENROUTER_KEY_ENV),
@@ -97,9 +100,9 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "openai/gpt-5.6-sol-pro": ("gpt-5.6-sol-pro", "gpt-5.6-sol"),
     "openai/gpt-5.6-terra": ("gpt-5.6-terra", "gpt-5.6-terra-1m", "terra"),
     "x-ai/grok-4.5": ("grok-4.5", "grok-4-5", "grok-4.5-20260708"),
-    "deepseek/deepseek-v4-pro": ("deepseek-v4-pro",),
-    "deepseek/deepseek-v4-flash": ("deepseek-v4-flash",),
-    "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max"),
+    "deepseek/deepseek-v4-pro": ("deepseek-v4-pro", "deepseek-v4-pro-di", "deepseek-ai/DeepSeek-V4-Pro"),
+    "deepseek/deepseek-v4-flash": ("deepseek-v4-flash", "deepseek-v4-flash-di", "deepseek-ai/DeepSeek-V4-Flash"),
+    "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max", "qwen3.7-max-di", "Qwen/Qwen3.7-Max"),
     "qwen/qwen3.7-plus": ("qwen3.7-plus", "qwen/qwen3.7-plus"),
     "minimax/minimax-m3": ("minimax-m3", "minimax-3"),
     "xiaomi/mimo-v2.5-pro": ("mimo-v2.5-pro", "mimo-2.5-pro"),
