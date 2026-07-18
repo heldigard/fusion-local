@@ -97,6 +97,15 @@ def test_panel_subs_falls_back_to_payg() -> None:
     check("subs fallback ran lane2", len(http_called) == 2, str(http_called))
 
 
+def test_panel_subs_includes_all_documented_subscription_families() -> None:
+    check("subs includes Grok seat", "grok" in panel_mod.PANEL_SUBS, str(panel_mod.PANEL_SUBS))
+    check(
+        "Grok seat maps to xAI model",
+        "x-ai/grok-4.5" in panel_mod.SUBS_WORKER_MODELS["grok"],
+        str(panel_mod.SUBS_WORKER_MODELS),
+    )
+
+
 def test_panel_cheap_uses_low_cost_models() -> None:
     calls: list[str] = []
 
@@ -195,10 +204,15 @@ def test_panel_mixed_always_runs_both_lanes() -> None:
         res = panel_mod.run_panel("task", preset="mixed", min_workers=1)
     check(
         "mixed runs all subscription workers",
-        len([c for c in calls if c.startswith("subs")]) == 4,
+        len([c for c in calls if c.startswith("subs")]) == len(panel_mod.PANEL_SUBS),
     )
     check("mixed runs default payg panel", len([c for c in calls if c.startswith("payg")]) == 2)
-    check("mixed returns six successes", len([r for r in res if r["success"]]) == 6, str(res))
+    check(
+        "mixed returns every configured success",
+        len([r for r in res if r["success"]])
+        == len(panel_mod.PANEL_SUBS) + len(panel_mod.PANEL_PAYG),
+        str(res),
+    )
 
     calls.clear()
     with (
@@ -1063,7 +1077,7 @@ def test_fuse_integrates() -> None:
     ):
         out = fuse("task", opts=FuseOptions(preset="subs", min_workers=1))
     check("fuse has 5 fields", all(k in out for k in judge_mod.FUSION_FIELDS))
-    check("fuse sources populated", len(out["sources"]) == 4)
+    check("fuse sources populated", len(out["sources"]) == len(panel_mod.PANEL_SUBS))
     check("fuse preset echoed", out["preset"] == "subs")
     check("fuse latency set", isinstance(out["total_latency"], (int, float)))
 
@@ -1087,10 +1101,18 @@ def test_fuse_preserves_metadata_on_judge_exception() -> None:
     ):
         out = fuse("task", opts=FuseOptions(preset="cheap"))
     check("fuse judge exception invalid", out["judge_valid"] is False, str(out))
-    check("fuse judge exception sources", len(out["sources"]) == 4, str(out["sources"]))
+    check(
+        "fuse judge exception sources",
+        len(out["sources"]) == len(panel_mod.PANEL_CHEAP),
+        str(out["sources"]),
+    )
     check("fuse judge exception preset", out["preset"] == "cheap", str(out))
     check("fuse judge exception latency", isinstance(out["total_latency"], (int, float)))
-    check("fuse judge exception evidence", len(out["panel_evidence"]) == 4, str(out))
+    check(
+        "fuse judge exception evidence",
+        len(out["panel_evidence"]) == len(panel_mod.PANEL_CHEAP),
+        str(out),
+    )
 
 
 def test_fuse_invalid_inputs_block_preflight() -> None:
@@ -1579,7 +1601,11 @@ def test_cli_json_degrades_on_judge_exception() -> None:
     parsed = json.loads(buf.getvalue())
     check("judge exception CLI exits 2", rc == 2, str(rc))
     check("judge exception CLI stays JSON", parsed["judge_valid"] is False, buf.getvalue())
-    check("judge exception CLI keeps evidence", len(parsed["panel_evidence"]) == 4, str(parsed))
+    check(
+        "judge exception CLI keeps evidence",
+        len(parsed["panel_evidence"]) == len(panel_mod.PANEL_CHEAP),
+        str(parsed),
+    )
     check("judge exception CLI has no traceback", "Traceback" not in buf.getvalue())
 
 

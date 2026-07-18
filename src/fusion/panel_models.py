@@ -21,8 +21,8 @@ DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
 DEEPINFRA_KEY_ENV = "DEEPINFRA_API_KEY"
 
 # Lane 1: $0 subscription workers, diverse families. Routed via config.ROUTER
-# (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm).
-PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai"]
+# (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm, grok=xAI).
+PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai", "grok"]
 
 # Cross-CLI override for lane-1 (mirrors FUSION_ROUTER semantics):
 # unset → PANEL_SUBS default; "" → disable lane-1; "a,b" → custom worker modes.
@@ -82,8 +82,20 @@ PANEL_PRESETS: tuple[str, ...] = ("subs", "payg", "cheap", "intelligence", "ultr
 SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "codex-spark": ("gpt-5.6-terra", "openai/gpt-5.6-terra"),
     "agy35-flash": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
-    "kimic": ("kimi-k2.7-code", "moonshotai/kimi-k2.7-code"),
+    # All K3 + K2.7 id forms so the seat is excluded when the controller itself
+    # runs Kimi (Claude wrapper id ``kimi-k3``/``kimi-3`` or native ``k3``) —
+    # prevents an echo-chamber where a K3 brain "second-opinions" a K3 worker.
+    "kimic": (
+        "kimi-k3",
+        "moonshotai/kimi-k3",
+        "k3",
+        "kimi-3",
+        "kimi-code/k3",
+        "kimi-k2.7-code",
+        "moonshotai/kimi-k2.7-code",
+    ),
     "zai": ("glm-5.2", "z-ai/glm-5.2"),
+    "grok": ("grok-4.5", "x-ai/grok-4.5"),
 }
 
 # Alias fan-out for current-model matching: a controller model id may appear
@@ -116,6 +128,7 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "xiaomi/mimo-v2.5-pro": ("mimo-v2.5-pro", "mimo-2.5-pro"),
     "google/gemini-3.5-flash": ("gemini-3.5-flash", "gemini-3.5-flash-1m"),
     "moonshotai/kimi-k2.7-code": ("kimi-k2.7-code", "kimi"),
+    "moonshotai/kimi-k3": ("kimi-k3", "k3", "kimi-3", "kimi-code/k3"),
     "z-ai/glm-5.2": ("glm-5.2", "glm5.2", "glm"),
 }
 
