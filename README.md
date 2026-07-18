@@ -14,7 +14,7 @@ Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
 Two deliberation modes with the same multi-perspective goal but different wire contracts:
 
 - **`fusion` (DEFAULT, local)** — a panel of diverse subscription workers (codex-spark /
-  agy35-flash / kimic / zai — $0) drafts answers in parallel; a local-first cheap_llm
+  agy35-flash / kimic / zai / grok — $0) drafts answers in parallel; a local-first cheap_llm
   judge with `deepseek-v4-flash` as its T2 fallback synthesizes the 5-field schema. Falls
   back to PAYG HTTP-direct panelists if subs are exhausted. Cost ≈ **$0–0.04**.
 - **`fusion --openrouter`** — the hosted `openrouter/fusion` model where every panelist
@@ -71,7 +71,7 @@ router-level cloud fallback, and bounded output. Fusion owns all lane-2/PAYG
 decisions, so a nominal subscription seat cannot silently become a cloud worker.
 
 Lane-1 **worker modes** are overridable the same way: `FUSION_PANEL_SUBS` unset →
-default (`codex-spark,agy35-flash,kimic,zai`); `FUSION_PANEL_SUBS=a,b` → custom
+default (`codex-spark,agy35-flash,kimic,zai,grok`); `FUSION_PANEL_SUBS=a,b` → custom
 modes for your dispatch; `FUSION_PANEL_SUBS=` (empty) → disable lane-1.
 
 | CLI | `fusion` command | lane-1 ($0 subs) | lane-2 (PAYG) |
@@ -173,7 +173,8 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 
 ## Model routing
 
-- **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai` (cross-family).
+- **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai`, `grok`
+  (cross-family).
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
 - **Mixed preset**: all configured subscription workers plus the default PAYG panel.
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
@@ -204,12 +205,12 @@ auto-invokes. Pick the cheapest panel whose downside-risk you can tolerate.
 
 | Preset | Seats | Output $/M | Use when | Avoid when |
 |---|---|---|---|---|
-| `subs` | 4 | $0 | default first pass; subs quota available | quota exhausted / no `FUSION_ROUTER` |
+| `subs` | 5 | $0 | default first pass; subs quota available | quota exhausted / no `FUSION_ROUTER` |
 | `cheap` | 4 | $0.15–1.28 | low-stakes sanity check, routine second opinion | irreversible / security / architecture |
 | `payg` | 2 | $0.87–3.75 | general deliberation, open-capable diversity | need frontier reasoning depth |
 | `intelligence` | 4 | $6–15 | medium-high: design tradeoffs, hard bugs, unfamiliar APIs | trivial (waste) or irreversible (use ultra) |
 | `ultra` | 5 | $6–50 | HIGH-STAKES: migrations, security/auth, prod, irreversible architecture | reversible / low-complexity — premium seats burn budget |
-| `mixed` | 6 | $0–3.75 | subs diversity AND a PAYG floor | tight cost budget |
+| `mixed` | 7 | $0–3.75 | subs diversity AND a PAYG floor | tight cost budget |
 
 **Rule of thumb:** escalate `cheap → payg → intelligence → ultra` only when the
 cost of being wrong exceeds the cost of the extra completions. `ultra`'s premium
