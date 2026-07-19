@@ -99,12 +99,144 @@ def test_panel_subs_falls_back_to_payg() -> None:
 
 
 def test_panel_subs_includes_all_documented_subscription_families() -> None:
-    check("subs includes Grok seat", "grok" in panel_mod.PANEL_SUBS, str(panel_mod.PANEL_SUBS))
+    all_workers = {worker for workers in panel_mod.SUBS_PROFILES.values() for worker in workers}
     check(
-        "Grok seat maps to xAI model",
-        "x-ai/grok-4.5" in panel_mod.SUBS_WORKER_MODELS["grok"],
+        "profiles cover every paid subscription family",
+        {
+            "codex-spark",
+            "claude-sonnet",
+            "agy35-flash",
+            "kimic",
+            "zai",
+            "mimo",
+            "grok",
+        }
+        <= all_workers,
+        str(panel_mod.SUBS_PROFILES),
+    )
+    check(
+        "balanced profile stays bounded",
+        tuple(panel_mod.PANEL_SUBS) == panel_mod.SUBS_PROFILES["balanced"]
+        and len(panel_mod.PANEL_SUBS) == 3,
+        str(panel_mod.PANEL_SUBS),
+    )
+    check(
+        "Grok coding seat maps to Grok Build",
+        "x-ai/grok-build-0.1" in panel_mod.SUBS_WORKER_MODELS["grok"],
         str(panel_mod.SUBS_WORKER_MODELS),
     )
+    check(
+        "named subscription profiles exclude metered workers",
+        not (all_workers & panel_mod.CREDIT_ONLY_WORKERS),
+        str(panel_mod.SUBS_PROFILES),
+    )
+
+
+def test_panel_subscription_profiles_select_task_specific_hands() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+    ):
+        panel_mod.run_panel("task", preset="subs", min_workers=1, subs_profile="coding")
+    check(
+        "coding profile dispatches only coding hands",
+        set(calls) == set(panel_mod.SUBS_PROFILES["coding"]),
+        str(calls),
+    )
+
+
+def test_panel_subscription_worker_override_precedes_profile() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {"FUSION_PANEL_SUBS": "mini,mimo"}, clear=True),
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+    ):
+        panel_mod.run_panel("task", preset="subs", min_workers=1, subs_profile="reasoning")
+    check("explicit worker override wins", calls == ["mini", "mimo"], str(calls))
+
+
+def test_panel_explicit_profile_precedes_environment_default() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {"FUSION_SUBS_PROFILE": "fast"}, clear=True),
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+    ):
+        panel_mod.run_panel("task", preset="subs", min_workers=1, subs_profile="coding")
+    check(
+        "explicit profile wins over environment default",
+        set(calls) == set(panel_mod.SUBS_PROFILES["coding"]),
+        str(calls),
+    )
+
+
+def test_panel_payg_ignores_invalid_subscription_profile_environment() -> None:
+    calls: list[str] = []
+
+    def fake_http(spec, _task, _timeout):
+        calls.append(spec[0])
+        return {"source": spec[0], "lane": "payg", "success": True, "output": "o"}
+
+    with (
+        patch.dict("os.environ", {"FUSION_SUBS_PROFILE": "invalid"}, clear=True),
+        patch.object(panel_mod, "_http_worker", fake_http),
+    ):
+        panel_mod.run_panel("task", preset="payg")
+    check("PAYG ignores unrelated subscription env", len(calls) == len(panel_mod.PANEL_PAYG))
+
+
+def test_panel_custom_workers_ignore_invalid_profile_environment() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"FUSION_PANEL_SUBS": "kimic,zai", "FUSION_SUBS_PROFILE": "invalid"},
+            clear=True,
+        ),
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+    ):
+        panel_mod.run_panel("task", preset="subs", min_workers=1)
+    check("custom worker list ignores profile env", calls == ["kimic", "zai"], str(calls))
+
+
+def test_panel_rejects_credit_only_worker_in_subscription_lane() -> None:
+    calls: list[str] = []
+
+    def recorder(*_args, **_kwargs):
+        calls.append("dispatch")
+        return []
+
+    with (
+        patch.dict("os.environ", {"FUSION_PANEL_SUBS": "claude-fable"}, clear=True),
+        patch.object(panel_mod, "_run_lane", recorder),
+    ):
+        raised = False
+        try:
+            panel_mod.run_panel("task", preset="subs")
+        except ValueError as exc:
+            raised = "credit-only worker" in str(exc) and "--preset ultra" in str(exc)
+    check("credit-only Fable is rejected from lane 1", raised)
+    check("credit-only rejection occurs before dispatch", calls == [], str(calls))
 
 
 def test_panel_cheap_uses_low_cost_models() -> None:
@@ -123,9 +255,8 @@ def test_panel_cheap_uses_low_cost_models() -> None:
     ok = [r for r in res if r["success"]]
     check("cheap preset calls all cheap workers", len(ok) == len(panel_mod.PANEL_CHEAP), str(res))
     check("cheap includes deepseek flash", "deepseek-ai/DeepSeek-V4-Flash" in calls, str(calls))
-    check("cheap includes qwen plus", "qwen/qwen3.7-plus" in calls, str(calls))
     check("cheap includes minimax m3", "minimax/minimax-m3" in calls, str(calls))
-    check("cheap includes mimo pro", "xiaomi/mimo-v2.5-pro" in calls, str(calls))
+    check("cheap has two nonredundant seats", len(calls) == 2, str(calls))
 
 
 def test_panel_ultra_uses_verified_frontier_models() -> None:
@@ -145,11 +276,10 @@ def test_panel_ultra_uses_verified_frontier_models() -> None:
     ok = [r for r in res if r["success"]]
     check("ultra preset calls all ultra workers", len(ok) == len(panel_mod.PANEL_ULTRA), str(res))
     check("ultra includes fable", "anthropic/claude-fable-5" in calls, str(calls))
-    check("ultra includes opus", "anthropic/claude-opus-4.8" in calls, str(calls))
     check("ultra includes gpt 5.6 sol pro", "openai/gpt-5.6-sol-pro" in calls, str(calls))
     check("ultra excludes legacy gpt-5.5-pro", "openai/gpt-5.5-pro" not in calls, str(calls))
     check("ultra includes grok 4.5", "x-ai/grok-4.5" in calls, str(calls))
-    check("ultra uses gemini pro latest alias", "~google/gemini-pro-latest" in calls, str(calls))
+    check("ultra has three nonredundant families", len(calls) == 3, str(calls))
 
 
 def test_panel_intelligence_uses_frontier_accessible_no_premium() -> None:
@@ -171,18 +301,14 @@ def test_panel_intelligence_uses_frontier_accessible_no_premium() -> None:
         str(res),
     )
     check("intelligence includes grok 4.5", "x-ai/grok-4.5" in calls, str(calls))
-    check(
-        "intelligence includes gemini pro latest", "~google/gemini-pro-latest" in calls, str(calls)
-    )
     check("intelligence includes gpt 5.6 terra", "openai/gpt-5.6-terra" in calls, str(calls))
-    check("intelligence includes deepseek v4 pro", "deepseek-v4-pro" in calls, str(calls))
-    # Intelligence deliberately excludes the premium closed seats ultra reserves
-    # for high-stakes work (fable $50, sol-pro $30, opus $25 per M output).
+    check("intelligence includes GLM 5.2", "z-ai/glm-5.2" in calls, str(calls))
+    check("intelligence has three nonredundant families", len(calls) == 3, str(calls))
+    # Intelligence deliberately excludes premium seats ultra reserves.
     check("intelligence excludes fable 5", "anthropic/claude-fable-5" not in calls, str(calls))
     check(
         "intelligence excludes gpt 5.6 sol pro", "openai/gpt-5.6-sol-pro" not in calls, str(calls)
     )
-    check("intelligence excludes opus 4.8", "anthropic/claude-opus-4.8" not in calls, str(calls))
 
 
 def test_panel_mixed_always_runs_both_lanes() -> None:
@@ -294,12 +420,12 @@ def test_panel_excludes_current_subscription_model() -> None:
             "task",
             preset="subs",
             min_workers=1,
-            current_model="google/gemini-3.5-flash",
+            current_model="moonshotai/kimi-k3",
         )
-    check("current subscription worker not called", "agy35-flash" not in calls, str(calls))
+    check("current subscription worker not called", "kimic" not in calls, str(calls))
     check(
         "other subscription workers still called",
-        "codex-spark" in calls and "zai" in calls,
+        "claude-sonnet" in calls and "zai" in calls,
         str(calls),
     )
     check("current subscription skip reported", any(r.get("skipped") for r in res), str(res))
@@ -320,12 +446,13 @@ def test_panel_excludes_current_grok_seat() -> None:
             "task",
             preset="subs",
             min_workers=1,
-            current_model="x-ai/grok-4.5",
+            current_model="x-ai/grok-build-0.1",
+            subs_profile="coding",
         )
     check("current grok worker not called", "grok" not in calls, str(calls))
     check(
         "other subscription workers still called",
-        "codex-spark" in calls and "zai" in calls,
+        "codex-spark" in calls and "claude-sonnet" in calls,
         str(calls),
     )
     skipped = [r for r in res if r.get("skipped")]
@@ -396,7 +523,7 @@ def test_detect_current_model_reads_gemini_settings() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         home = _P(tmp)
-        settings = home / ".gemini" / "settings.json"
+        settings = home / ".gemini" / "antigravity-cli" / "settings.json"
         settings.parent.mkdir(parents=True)
         settings.write_text('{"model": {"name": "gemini-3.5-flash"}}', encoding="utf-8")
         with (
@@ -405,7 +532,7 @@ def test_detect_current_model_reads_gemini_settings() -> None:
         ):
             model = panel_mod.detect_current_model()
     check(
-        "Antigravity/Gemini session reads settings.json model",
+        "Antigravity session reads its own settings.json model",
         model == "gemini-3.5-flash",
         str(model),
     )
@@ -426,6 +553,27 @@ def test_detect_current_model_reads_gemini_settings_direct_string() -> None:
         ):
             model = panel_mod.detect_current_model()
     check("Gemini direct string model read", model == "gemini-pro-latest", str(model))
+
+
+def test_subscription_mode_model_mappings_are_exact() -> None:
+    cases = (
+        ("codex-coding", "openai/gpt-5.6-terra"),
+        ("agy3-pro", "google/gemini-3.1-pro"),
+        ("agy-research", "Gemini 3.1 Pro (High)"),
+        ("agy-opus", "Claude Opus 4.6 (Thinking)"),
+        ("agy-sonnet", "Claude Sonnet 4.6 (Thinking)"),
+        ("agy35-flash", "Gemini 3.5 Flash (Medium)"),
+        ("qwen-cli", "qwen/qwen3.7-max"),
+    )
+    for worker, current_model in cases:
+        check(
+            f"{worker} maps to {current_model}",
+            panel_mod._matches_current_model(worker, current_model),
+        )
+    check(
+        "Antigravity Pro does not masquerade as Flash",
+        not panel_mod._matches_current_model("agy3-pro", "google/gemini-3.5-flash"),
+    )
 
 
 def test_current_model_1m_suffix_matches_panel_seat() -> None:
@@ -555,18 +703,19 @@ def test_panel_public_errors_hide_untrusted_details() -> None:
         router = panel_mod._cworker_worker("codex-spark", "task", 5)
     check("router error hides exception detail", marker not in router["error"], router["error"])
 
+    payg_spec = panel_mod.PANEL_PAYG[0]
     http_error = urllib.error.HTTPError(
-        panel_mod.OPENROUTER_URL,
+        payg_spec[1],
         429,
         "rate limited",
         hdrs=Message(),
         fp=io.BytesIO(marker.encode()),
     )
     with (
-        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.dict("os.environ", {payg_spec[3]: "test-key"}),
         patch.object(panel_mod.urllib.request, "urlopen", side_effect=http_error),
     ):
-        payg = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+        payg = panel_mod._http_worker(payg_spec, "task", 5)
     check("HTTP error reports status", "429" in payg["error"], payg["error"])
     check("HTTP error hides body", marker not in payg["error"], payg["error"])
     check("HTTP error is bounded", len(payg["error"]) <= 300, payg["error"])
@@ -574,15 +723,16 @@ def test_panel_public_errors_hide_untrusted_details() -> None:
 
 def test_http_worker_rejects_non_string_content() -> None:
     response = {"choices": [{"message": {"content": [{"type": "text", "text": "x"}]}}]}
+    payg_spec = panel_mod.PANEL_PAYG[0]
     with (
-        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.dict("os.environ", {payg_spec[3]: "test-key"}),
         patch.object(
             panel_mod.urllib.request,
             "urlopen",
             return_value=io.BytesIO(json.dumps(response).encode()),
         ),
     ):
-        result = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+        result = panel_mod._http_worker(payg_spec, "task", 5)
     check("non-string HTTP content fails", result["success"] is False, str(result))
     check("non-string HTTP content is malformed", result["error"] == "malformed response")
 
@@ -606,23 +756,25 @@ def test_safe_usage_allows_only_nonnegative_numeric_metrics() -> None:
 
 
 def test_http_worker_rejects_oversized_response() -> None:
+    payg_spec = panel_mod.PANEL_PAYG[0]
     with (
-        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.dict("os.environ", {payg_spec[3]: "test-key"}),
         patch.object(panel_mod, "MAX_EXTERNAL_RESPONSE_BYTES", 10),
         patch.object(panel_mod.urllib.request, "urlopen", return_value=io.BytesIO(b"x" * 11)),
     ):
-        result = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+        result = panel_mod._http_worker(payg_spec, "task", 5)
     check("oversized PAYG response fails", result["success"] is False, str(result))
     check("oversized PAYG response is stable", result["error"] == "payg response too large")
 
 
 def test_http_worker_rejects_invalid_utf8() -> None:
     raw = b'{"choices":[{"message":{"content":"\xff"}}]}'
+    payg_spec = panel_mod.PANEL_PAYG[0]
     with (
-        patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
+        patch.dict("os.environ", {payg_spec[3]: "test-key"}),
         patch.object(panel_mod.urllib.request, "urlopen", return_value=io.BytesIO(raw)),
     ):
-        result = panel_mod._http_worker(panel_mod.PANEL_PAYG[0], "task", 5)
+        result = panel_mod._http_worker(payg_spec, "task", 5)
     check("invalid UTF-8 PAYG response fails", result["success"] is False, str(result))
     check("invalid UTF-8 is malformed", result["error"] == "malformed response", str(result))
 
@@ -873,14 +1025,18 @@ def test_payg_model_ids_are_current_shape() -> None:
         len(canonical) == len(set(canonical)),
         str(canonical),
     )
-    check("qwen model uses canonical openrouter id", qwen[0][2] == "qwen/qwen3.7-max")
+    check("qwen model uses canonical ZenMux id", qwen[0][2] == "qwen/qwen3.7-max")
+    check("qwen uses lower-cost ZenMux route", qwen[0][3] == panel_mod.ZENMUX_KEY_ENV)
     cheap_ids = {spec[2] for spec in panel_mod.PANEL_CHEAP}
     check("cheap deepseek is flash", "deepseek-ai/DeepSeek-V4-Flash" in cheap_ids, str(cheap_ids))
-    check("cheap qwen is plus", "qwen/qwen3.7-plus" in cheap_ids, str(cheap_ids))
     check("cheap minimax is m3", "minimax/minimax-m3" in cheap_ids, str(cheap_ids))
-    check("cheap mimo is v2.5 pro", "xiaomi/mimo-v2.5-pro" in cheap_ids, str(cheap_ids))
+    check("cheap drops dominated Qwen Plus", "qwen/qwen3.7-plus" not in cheap_ids, str(cheap_ids))
+    check(
+        "cheap drops general-purpose MiMo seat",
+        "xiaomi/mimo-v2.5-pro" not in cheap_ids,
+        str(cheap_ids),
+    )
     ultra_ids = {spec[2] for spec in panel_mod.PANEL_ULTRA}
-    check("ultra opus 4.8 present", "anthropic/claude-opus-4.8" in ultra_ids, str(ultra_ids))
     check("ultra fable 5 present", "anthropic/claude-fable-5" in ultra_ids, str(ultra_ids))
     check(
         "ultra uses verified gpt 5.6 sol pro", "openai/gpt-5.6-sol-pro" in ultra_ids, str(ultra_ids)
@@ -888,8 +1044,8 @@ def test_payg_model_ids_are_current_shape() -> None:
     check("ultra drops legacy gpt 5.5 pro", "openai/gpt-5.5-pro" not in ultra_ids, str(ultra_ids))
     check("ultra includes grok 4.5", "x-ai/grok-4.5" in ultra_ids, str(ultra_ids))
     check(
-        "ultra uses gemini pro latest alias",
-        "~google/gemini-pro-latest" in ultra_ids,
+        "ultra excludes dominated opus sibling",
+        "anthropic/claude-opus-4.8" not in ultra_ids,
         str(ultra_ids),
     )
     check(
@@ -900,16 +1056,11 @@ def test_payg_model_ids_are_current_shape() -> None:
     intel_ids = {spec[2] for spec in panel_mod.PANEL_INTELLIGENCE}
     check("intelligence includes grok 4.5", "x-ai/grok-4.5" in intel_ids, str(intel_ids))
     check(
-        "intelligence includes gemini pro latest",
-        "~google/gemini-pro-latest" in intel_ids,
-        str(intel_ids),
-    )
-    check(
         "intelligence includes gpt 5.6 terra", "openai/gpt-5.6-terra" in intel_ids, str(intel_ids)
     )
     check(
-        "intelligence includes deepseek v4 pro",
-        "deepseek-v4-pro" in intel_ids,
+        "intelligence includes GLM 5.2",
+        "z-ai/glm-5.2" in intel_ids,
         str(intel_ids),
     )
     check(
@@ -1120,6 +1271,37 @@ def test_fuse_integrates() -> None:
     check("fuse latency set", isinstance(out["total_latency"], (int, float)))
 
 
+def test_fuse_reports_custom_subscription_worker_list() -> None:
+    with (
+        patch.dict("os.environ", {"FUSION_PANEL_SUBS": "kimic,zai"}, clear=True),
+        patch.object(
+            panel_mod,
+            "_cworker_worker",
+            lambda m, _t, _to: {
+                "source": m,
+                "lane": "subscription",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch(
+            "cheap_llm.cheap_complete",
+            _fake_cheap_complete(
+                {
+                    "consensus": "C",
+                    "contradictions": [],
+                    "coverage_gaps": [],
+                    "unique_insights": [],
+                    "blind_spots": [],
+                }
+            ),
+        ),
+    ):
+        out = fuse("task", opts=FuseOptions(preset="subs", min_workers=1))
+    check("custom subscription list is observable", out["subs_profile"] == "custom", str(out))
+    check("custom subscription sources are exact", len(out["sources"]) == 2, str(out["sources"]))
+
+
 def test_fuse_preserves_metadata_on_judge_exception() -> None:
     def fail_transport(*_args, **_kwargs):
         raise TimeoutError("transport down")
@@ -1252,7 +1434,7 @@ def test_fuse_envelope_matches_declared_contract() -> None:
         str(envelope_keys - declared),
     )
     # error/panel_evidence/current_model are intentionally conditional; the rest
-    # of the declared field set must always be present on a successful fuse().
+    # of the declared field set must always be present on a successful subs fuse().
     always_present = declared - {"error", "panel_evidence", "current_model"}
     check(
         "declared always-present fields emitted",
@@ -1745,6 +1927,34 @@ def test_cli_json_degrades_on_judge_exception() -> None:
 TESTS = [
     ("panel_payg_uses_lane2_only", test_panel_payg_uses_lane2_only),
     ("panel_subs_falls_back_to_payg", test_panel_subs_falls_back_to_payg),
+    (
+        "panel_subs_includes_all_documented_subscription_families",
+        test_panel_subs_includes_all_documented_subscription_families,
+    ),
+    (
+        "panel_subscription_profiles_select_task_specific_hands",
+        test_panel_subscription_profiles_select_task_specific_hands,
+    ),
+    (
+        "panel_subscription_worker_override_precedes_profile",
+        test_panel_subscription_worker_override_precedes_profile,
+    ),
+    (
+        "panel_explicit_profile_precedes_environment_default",
+        test_panel_explicit_profile_precedes_environment_default,
+    ),
+    (
+        "panel_payg_ignores_invalid_subscription_profile_environment",
+        test_panel_payg_ignores_invalid_subscription_profile_environment,
+    ),
+    (
+        "panel_custom_workers_ignore_invalid_profile_environment",
+        test_panel_custom_workers_ignore_invalid_profile_environment,
+    ),
+    (
+        "panel_rejects_credit_only_worker_in_subscription_lane",
+        test_panel_rejects_credit_only_worker_in_subscription_lane,
+    ),
     ("panel_cheap_uses_low_cost_models", test_panel_cheap_uses_low_cost_models),
     ("panel_ultra_uses_verified_frontier_models", test_panel_ultra_uses_verified_frontier_models),
     ("panel_mixed_always_runs_both_lanes", test_panel_mixed_always_runs_both_lanes),
@@ -1772,6 +1982,10 @@ TESTS = [
     (
         "detect_current_model_reads_gemini_settings_direct_string",
         test_detect_current_model_reads_gemini_settings_direct_string,
+    ),
+    (
+        "subscription_mode_model_mappings_are_exact",
+        test_subscription_mode_model_mappings_are_exact,
     ),
     (
         "current_model_1m_suffix_matches_panel_seat",
@@ -1821,6 +2035,10 @@ TESTS = [
     ("judge_validates_inputs_before_transport", test_judge_validates_inputs_before_transport),
     ("judge_empty_panel", test_judge_empty_panel),
     ("fuse_integrates", test_fuse_integrates),
+    (
+        "fuse_reports_custom_subscription_worker_list",
+        test_fuse_reports_custom_subscription_worker_list,
+    ),
     ("fuse_preserves_metadata_on_judge_exception", test_fuse_preserves_metadata_on_judge_exception),
     ("fuse_invalid_inputs_block_preflight", test_fuse_invalid_inputs_block_preflight),
     ("fuse_echoes_current_model", test_fuse_echoes_current_model),

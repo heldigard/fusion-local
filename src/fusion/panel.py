@@ -1,8 +1,8 @@
 """Panel feature — gather N diverse model responses (lanes + orchestration).
 
-Lane 1 ($0 subs): cworker router → codex-spark/agy35-flash/kimic/zai/grok
-(Claude ecosystem shim). Lane 2 (PAYG, universal cross-CLI): HTTP direct to
-OpenRouter. The orchestration runs lane 1, falls back to lane 2 when fewer than
+Lane 1 ($0 subs): a task-specific subscription profile routed through cworker.
+Lane 2 (PAYG, universal cross-CLI): HTTP direct to explicitly bound providers.
+The orchestration runs lane 1, then falls back to lane 2 when fewer than
 ``min_workers`` succeed.
 
 The model catalog (``panel_models``) and current-controller-model detection
@@ -39,6 +39,7 @@ from .panel_current import (  # noqa: F401 — re-exported (capabilities/tests)
     detect_current_model,
 )
 from .panel_models import (  # noqa: F401 — re-exported (public/test surface)
+    CREDIT_ONLY_WORKERS,
     DEEPSEEK_KEY_ENV,
     DEEPSEEK_URL,
     HTTP_REFERER,
@@ -52,10 +53,16 @@ from .panel_models import (  # noqa: F401 — re-exported (public/test surface)
     PANEL_PRESETS,
     PANEL_SUBS,
     PANEL_SUBS_ENV,
+    PANEL_SUBS_PROFILE_ENV,
     PANEL_ULTRA,
     PAYG_PRESETS,
+    SUBS_PROFILE_DEFAULT,
+    SUBS_PROFILE_NAMES,
+    SUBS_PROFILES,
     SUBS_WORKER_MODELS,
     WORKER_GUARD,
+    ZENMUX_KEY_ENV,
+    ZENMUX_URL,
     LaneWorker,
     Spec,
 )
@@ -67,12 +74,30 @@ def _payg_panel_for_preset(preset: str) -> list[Spec]:
     return PAYG_PRESETS[preset]
 
 
-def _subs_workers() -> list[str]:
-    """Lane-1 worker modes, honoring the FUSION_PANEL_SUBS cross-CLI override."""
+def resolve_subs_profile(profile: str | None = None) -> str:
+    """Resolve explicit option → environment default → package default."""
+    env_profile = os.environ.get(PANEL_SUBS_PROFILE_ENV)
+    selected = profile if profile is not None else env_profile or SUBS_PROFILE_DEFAULT
+    selected = selected.strip()
+    if selected not in SUBS_PROFILES:
+        raise ValueError(f"subs_profile must be one of: {', '.join(SUBS_PROFILE_NAMES)}")
+    return selected
+
+
+def _subs_workers(profile: str | None = None) -> list[str]:
+    """Resolve lane-1 modes; an explicit worker list overrides named profiles."""
     env = os.environ.get(PANEL_SUBS_ENV)
-    if env is None:
-        return list(PANEL_SUBS)
-    return [mode.strip() for mode in env.split(",") if mode.strip()]
+    if env is not None:
+        workers = [mode.strip() for mode in env.split(",") if mode.strip()]
+    else:
+        workers = list(SUBS_PROFILES[resolve_subs_profile(profile)])
+    metered = sorted(set(workers) & CREDIT_ONLY_WORKERS)
+    if metered:
+        names = ", ".join(metered)
+        raise ValueError(
+            f"credit-only worker cannot run in subscription lane: {names}; use --preset ultra"
+        )
+    return workers
 
 
 def _scrub(text: str) -> str:
@@ -356,15 +381,16 @@ def run_panel(
     timeout: int = 60,
     min_workers: int = 2,
     current_model: str | None = None,
+    subs_profile: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run the deliberation panel. Successful outputs first, failures after.
 
     preset:
       - "subs"        : lane 1 only ($0 subscription). Fallback to lane 2 if < min_workers succeed.
       - "payg"        : lane 2 only (universal PAYG HTTP direct).
-      - "cheap"       : low-cost OpenRouter lane 2 panel.
+      - "cheap"       : low-cost provider-bound lane 2 panel.
       - "intelligence": frontier-accessible lane 2 panel (no premium $25-50/M seats).
-      - "ultra"       : strongest verified OpenRouter lane 2 panel (full frontier).
+      - "ultra"       : strongest verified lane 2 panel (full frontier).
       - "mixed"       : always run lane 1 and the default PAYG lane 2 panel.
     """
     require_nonempty_string("task", task)
@@ -373,6 +399,17 @@ def run_panel(
     require_positive_int("timeout", timeout)
     require_positive_int("min_workers", min_workers)
     require_nonempty_string("current_model", current_model, optional=True)
+    require_nonempty_string("subs_profile", subs_profile, optional=True)
+    has_custom_subs = os.environ.get(PANEL_SUBS_ENV) is not None
+    resolved_subs_profile = (
+        "custom"
+        if has_custom_subs and preset in ("subs", "mixed")
+        else (
+            resolve_subs_profile(subs_profile)
+            if subs_profile is not None or preset in ("subs", "mixed")
+            else SUBS_PROFILE_DEFAULT
+        )
+    )
     task = _scrub(task)
     current_model = detect_current_model(current_model)
 
@@ -383,7 +420,10 @@ def run_panel(
     # order stays deterministic: skips, then subscription outputs, then payg
     # outputs, finally reordered success-first by the shared return path.
     if preset == "mixed":
-        subs_workers, skip_subs = _without_current_model(_subs_workers(), current_model)
+        subs_workers, skip_subs = _without_current_model(
+            _subs_workers(None if resolved_subs_profile == "custom" else resolved_subs_profile),
+            current_model,
+        )
         payg_workers, skip_payg = _without_current_model(
             _payg_panel_for_preset(preset), current_model
         )
@@ -396,7 +436,10 @@ def run_panel(
 
     all_results: list[dict[str, Any]] = []
     if preset == "subs":
-        subs_workers, skipped = _without_current_model(_subs_workers(), current_model)
+        subs_workers, skipped = _without_current_model(
+            _subs_workers(None if resolved_subs_profile == "custom" else resolved_subs_profile),
+            current_model,
+        )
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]

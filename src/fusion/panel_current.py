@@ -87,15 +87,23 @@ def _codex_settings_model() -> str | None:
 
 
 def _gemini_settings_model() -> str | None:
-    settings = Path.home() / ".gemini" / "settings.json"
-    try:
-        payload = json.loads(settings.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    model = payload.get("model")
-    if isinstance(model, dict):
-        model = model.get("name")
-    return model.strip() or None if isinstance(model, str) else None
+    # Antigravity CLI has its own settings directory. Keep the legacy Gemini
+    # CLI location as a fallback for older wrappers and shared installations.
+    settings_paths = (
+        Path.home() / ".gemini" / "antigravity-cli" / "settings.json",
+        Path.home() / ".gemini" / "settings.json",
+    )
+    for settings in settings_paths:
+        try:
+            payload = json.loads(settings.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        model = payload.get("model")
+        if isinstance(model, dict):
+            model = model.get("name")
+        if isinstance(model, str) and model.strip():
+            return model.strip()
+    return None
 
 
 def _identity_model(identity: str) -> str | None:

@@ -6,6 +6,9 @@ unique insights / blind spots** — at a fraction of the cost of a single fronti
 
 Public repo: https://github.com/heldigard/fusion-local
 
+Current model evidence and promotion gates:
+[`docs/model-routing-audit-2026-07-19.md`](docs/model-routing-audit-2026-07-19.md).
+
 Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
 `codeq` / `smart-trim` / `prompt-improve` / `cheap-llm` pattern. **Cross-CLI**: works identically from Claude Code, Codex, Antigravity, OpenCode.
 
@@ -13,8 +16,8 @@ Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
 
 Two deliberation modes with the same multi-perspective goal but different wire contracts:
 
-- **`fusion` (DEFAULT, local)** — a panel of diverse subscription workers (codex-spark /
-  agy35-flash / kimic / zai / grok — $0) drafts answers in parallel; a local-first cheap_llm
+- **`fusion` (DEFAULT, local)** — a task-specific panel of subscription workers ($0)
+  drafts answers in parallel; a local-first cheap_llm
   judge with `deepseek-v4-flash` as its T2 fallback synthesizes the 5-field schema. Falls
   back to PAYG HTTP-direct panelists if subs are exhausted. Cost ≈ **$0–0.04**.
 - **`fusion --openrouter`** — the hosted `openrouter/fusion` model where every panelist
@@ -73,9 +76,10 @@ The first-party router uses `fusion-panel-v1`: answer-only stdout, no tools, no
 router-level cloud fallback, and bounded output. Fusion owns all lane-2/PAYG
 decisions, so a nominal subscription seat cannot silently become a cloud worker.
 
-Lane-1 **worker modes** are overridable the same way: `FUSION_PANEL_SUBS` unset →
-default (`codex-spark,agy35-flash,kimic,zai,grok`); `FUSION_PANEL_SUBS=a,b` → custom
-modes for your dispatch; `FUSION_PANEL_SUBS=` (empty) → disable lane-1.
+Lane-1 defaults to the `balanced` profile. Select another with
+`--subs-profile coding|reasoning|fast|specialists` or `FUSION_SUBS_PROFILE`; an explicit
+`FUSION_PANEL_SUBS=a,b` worker list has highest precedence. Set
+`FUSION_PANEL_SUBS=` (empty) to disable lane-1.
 
 | CLI | `fusion` command | lane-1 ($0 subs) | lane-2 (PAYG) |
 |-----|------------------|------------------|---------------|
@@ -97,8 +101,12 @@ modes for your dispatch; `FUSION_PANEL_SUBS=` (empty) → disable lane-1.
 ```
 fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
+fusion --subs-profile coding "<Q>"            # code specialists, subscriptions only
+fusion --subs-profile reasoning --panel-timeout 480 "<Q>"  # frontier subscription hands
+fusion --subs-profile fast "<Q>"              # bounded high-volume validation
+fusion --subs-profile specialists "<Q>"       # Kimi/GLM/MiMo/Grok diversity
 fusion --preset mixed "<Q>"                   # always run subs + default PAYG panel
-fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
+fusion --preset cheap "<Q>"                   # low-cost direct-provider panel
 fusion --preset intelligence "<Q>"            # frontier-accessible (medium-high complexity)
 fusion --preset ultra --current-model "$MODEL" "<Q>"  # full frontier (high-stakes only)
 fusion --preset ultra --cloud-judge --cloud-model deepseek/deepseek-v4-pro "<Q>"
@@ -176,22 +184,34 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 
 ## Model routing
 
-- **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai`, `grok`
-  (cross-family).
+- **Panel lane 1 ($0 subs)** uses explicit task profiles:
+  - `balanced`: Claude Sonnet 5, Kimi K3, GLM 5.2; three live-verified families.
+  - `coding`: GPT-5.6 Terra, Claude Sonnet 5, Kimi K3, Grok Build.
+  - `reasoning`: Claude Opus 4.8, GPT-5.6 Sol, Gemini 3.5 Flash, Kimi K3, GLM 5.2.
+  - `fast`: GPT-5.6 Luna, Gemini 3.5 Flash, GLM 5.2.
+  - `specialists`: Kimi K3, GLM 5.2, MiMo V2.5 Pro, Grok Build.
+  MiniMax M2.7 is excluded because M3 supersedes it; its subscription seat
+  remains manual via `FUSION_PANEL_SUBS=mini`. MiMo stays opt-in, and Grok Build
+  is treated as a coding specialist rather than as Grok 4.5.
+  Live protocol checks confirmed direct Claude Fable/Sonnet/Opus and
+  Antigravity Gemini 3.5 Flash, Gemini 3.1 Pro, Claude Opus 4.6, and Claude
+  Sonnet 4.6. Fable's response does not imply subscription coverage: after
+  2026-07-07 Anthropic meters it through usage credits, so Fusion rejects
+  `claude-fable` from lane 1 and exposes it only through the explicit PAYG
+  `ultra` preset. The Antigravity Claude seats remain manual because the newer
+  direct-Claude seats dominate them.
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro` (first-party
   `api.deepseek.com` since 2026-07-17 — same weights, no OpenRouter markup),
-  `qwen3.7-max` (OpenRouter).
+  `qwen3.7-max` (ZenMux, lower verified listing price).
 - **Mixed preset**: all configured subscription workers plus the default PAYG panel.
-- **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
-- **Intelligence preset**: `x-ai/grok-4.5`, `~google/gemini-pro-latest`,
-  `openai/gpt-5.6-terra`, `deepseek-v4-pro` (first-party). Frontier-accessible, 4
-  families, NO premium $25–50/M seats — for medium-high complexity without the
-  ultra tax (~5x cheaper than ultra).
-- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.6-sol-pro`,
-  `~google/gemini-pro-latest`, `x-ai/grok-4.5`. GPT-5.6 Sol Pro and Grok 4.5
-  verified in the live OpenRouter catalog (2026-07-12); legacy `gpt-5.5-pro`
-  dropped. Gemini stays on the `~google/gemini-pro-latest` alias (no pinned pro
-  ID is exposed beyond it).
+- **Cheap preset**: `deepseek-v4-flash` (DeepInfra) + `minimax-m3` (ZenMux).
+  Qwen Plus and MiMo were removed because they did not add enough quality or
+  agentic strength to justify doubling panel and judge-input tokens.
+- **Intelligence preset**: `x-ai/grok-4.5`, `openai/gpt-5.6-terra`, `z-ai/glm-5.2`.
+  Three strong families without premium Fable/Sol-Pro seats.
+- **Ultra preset**: `claude-fable-5`, `gpt-5.6-sol-pro`, `x-ai/grok-4.5`.
+  Opus 4.8 was removed because Fable 5 dominates it within Anthropic; the
+  weaker Gemini Pro slot was also removed.
 - **Judge**: local-first cheap_llm cascade with `deepseek/deepseek-v4-flash`
   (1M ctx) pinned as T2 fallback; explicit `--cloud-judge` skips T1.
 - **Current-model exclusion**: pass `--current-model`, or set `FUSION_CURRENT_MODEL`,
@@ -204,21 +224,21 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 
 ## Preset selection by complexity
 
-Cost is output $/M tokens (live OpenRouter, 2026-07-12). The controller decides
+Cost is output $/M tokens (live provider catalogs, 2026-07-19). The controller decides
 when to invoke fusion and which preset fits the stakes — fusion itself never
 auto-invokes. Pick the cheapest panel whose downside-risk you can tolerate.
 
 | Preset | Seats | Output $/M | Use when | Avoid when |
 |---|---|---|---|---|
-| `subs` | 5 | $0 | default first pass; subs quota available | quota exhausted / no `FUSION_ROUTER` |
-| `cheap` | 4 | $0.15–1.28 | low-stakes sanity check, routine second opinion | irreversible / security / architecture |
-| `payg` | 2 | $0.87–3.75 | general deliberation, open-capable diversity | need frontier reasoning depth |
-| `intelligence` | 4 | $6–15 | medium-high: design tradeoffs, hard bugs, unfamiliar APIs | trivial (waste) or irreversible (use ultra) |
-| `ultra` | 5 | $6–50 | HIGH-STAKES: migrations, security/auth, prod, irreversible architecture | reversible / low-complexity — premium seats burn budget |
-| `mixed` | 7 | $0–3.75 | subs diversity AND a PAYG floor | tight cost budget |
+| `subs` | 3–5 | $0 | task-specific first pass; subs quota available | quota exhausted / no `FUSION_ROUTER` |
+| `cheap` | 2 | $0.18–1.10 | low-stakes sanity check, routine second opinion | irreversible / security / architecture |
+| `payg` | 2 | $0.87–1.29 | general deliberation, open-capable diversity | need frontier reasoning depth |
+| `intelligence` | 3 | $3.08–15 | medium-high: design tradeoffs, hard bugs, unfamiliar APIs | trivial (waste) or irreversible (use ultra) |
+| `ultra` | 3 | $6–50 | HIGH-STAKES: migrations, security/auth, prod, irreversible architecture | reversible / low-complexity — premium seats burn budget |
+| `mixed` | 5 | $0–1.29 | subs diversity AND a PAYG floor | tight cost budget |
 
 **Rule of thumb:** escalate `cheap → payg → intelligence → ultra` only when the
 cost of being wrong exceeds the cost of the extra completions. `ultra`'s premium
-seats (fable-5, sol-pro, opus-4.8) are for irreversible/high-stakes work; for
+seats (fable-5 and sol-pro) are for irreversible/high-stakes work; for
 medium-high complexity use `intelligence` (frontier voices without the premium
 tax).

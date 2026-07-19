@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -29,7 +30,15 @@ from ._boundary import (
 from ._version import __version__
 from .capabilities import capabilities_payload
 from .judge import DEFAULT_JUDGE_MODEL, empty_fields, preflight, run_judge
-from .panel import PANEL_PRESETS, detect_current_model, run_panel
+from .panel import (
+    PANEL_PRESETS,
+    PANEL_SUBS_ENV,
+    SUBS_PROFILE_DEFAULT,
+    SUBS_PROFILE_NAMES,
+    detect_current_model,
+    resolve_subs_profile,
+    run_panel,
+)
 
 
 @dataclass
@@ -43,6 +52,7 @@ class FuseOptions:
     min_workers: int = 2
     current_model: str | None = None
     judge_prefer_local: bool = True
+    subs_profile: str | None = None
 
 
 def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
@@ -55,6 +65,17 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
         raise ValueError(f"preset must be one of: {', '.join(PANEL_PRESETS)}")
     require_nonempty_string("cloud_model", o.cloud_model, optional=True)
     require_nonempty_string("current_model", o.current_model, optional=True)
+    require_nonempty_string("subs_profile", o.subs_profile, optional=True)
+    has_custom_subs = os.environ.get(PANEL_SUBS_ENV) is not None
+    resolved_subs_profile = (
+        "custom"
+        if has_custom_subs and o.preset in ("subs", "mixed")
+        else (
+            resolve_subs_profile(o.subs_profile)
+            if o.subs_profile is not None or o.preset in ("subs", "mixed")
+            else SUBS_PROFILE_DEFAULT
+        )
+    )
     require_positive_int("panel_timeout", o.panel_timeout)
     require_positive_int("judge_timeout", o.judge_timeout)
     require_positive_int("min_workers", o.min_workers)
@@ -73,6 +94,11 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             error=gate["error"],
             sources=[],
             preset=o.preset,
+            **(
+                {"subs_profile": resolved_subs_profile}
+                if o.preset in ("subs", "mixed")
+                else {}
+            ),
             panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
         )
@@ -84,6 +110,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             timeout=o.panel_timeout,
             min_workers=o.min_workers,
             current_model=current_model,
+            subs_profile=o.subs_profile,
         )
     except SecretScrubError:
         return empty_fields(
@@ -94,6 +121,11 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             error="panel prompt scrub unavailable",
             sources=[],
             preset=o.preset,
+            **(
+                {"subs_profile": resolved_subs_profile}
+                if o.preset in ("subs", "mixed")
+                else {}
+            ),
             panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
         )
@@ -109,6 +141,8 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     jd["sources"] = [_source_meta(r) for r in pr]
     jd["total_latency"] = round(time.perf_counter() - t0, 2)
     jd["preset"] = o.preset
+    if o.preset in ("subs", "mixed"):
+        jd["subs_profile"] = resolved_subs_profile
     jd["schema_version"] = 1
     jd["status"] = "ok" if jd.get("judge_valid") else "degraded"
     jd["panel_quorum"] = {
@@ -183,6 +217,15 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=PANEL_PRESETS,
         default="subs",
         help="Panel source: subs ($0, default), payg, cheap, intelligence, ultra, mixed.",
+    )
+    parser.add_argument(
+        "--subs-profile",
+        choices=SUBS_PROFILE_NAMES,
+        default=None,
+        help=(
+            "Subscription hands: balanced, coding, reasoning, fast, or specialists. "
+            f"Default: {SUBS_PROFILE_DEFAULT} (or FUSION_SUBS_PROFILE)."
+        ),
     )
     parser.add_argument(
         "--cloud-model",
@@ -288,6 +331,7 @@ def main() -> int:
                 min_workers=args.min_workers,
                 current_model=args.current_model,
                 judge_prefer_local=not args.cloud_judge,
+                subs_profile=args.subs_profile,
             ),
         )
     except ValueError as exc:

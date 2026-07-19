@@ -46,9 +46,9 @@ Each module is one cohesive feature. Module/function names don't collide (`run_p
 ## Cascade (panel → judge)
 
 ```
-PANEL LANE 1 ($0 subs, parallel)   codex-spark · agy35-flash · kimic · zai · grok
+PANEL LANE 1 ($0 subs, parallel)   explicit balanced/coding/reasoning/fast/specialists profile
     fallback when < min_workers succeed ↓
-PANEL LANE 2 (PAYG, HTTP direct)   deepseek-v4-pro (api.deepseek.com) · qwen3.7-max (OpenRouter)
+PANEL LANE 2 (PAYG, HTTP direct)   deepseek-v4-pro (api.deepseek.com) · qwen3.7-max (ZenMux)
     ↓
 JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE_SCHEMA_PROMPT
     → 5-field JSON {consensus, contradictions, coverage_gaps, unique_insights, blind_spots}
@@ -61,8 +61,10 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
 - **lane-1** (subs) uses `FUSION_ROUTER` (default `~/.claude/scripts/codex-worker-router.py`,
   Claude ecosystem). Non-Claude CLIs: set `FUSION_ROUTER=/your/dispatch`, or `FUSION_ROUTER=`
   to disable (panel falls back to lane-2 PAYG, universal).
-- **lane-1 worker modes**: `FUSION_PANEL_SUBS` (unset = default 5 modes; `a,b` = custom;
-  empty = disable lane-1). Same 3-mode semantics as `FUSION_ROUTER`.
+- **lane-1 profile**: `--subs-profile` / `FUSION_SUBS_PROFILE` selects
+  `balanced`, `coding`, `reasoning`, `fast`, or `specialists`.
+- **lane-1 worker modes**: `FUSION_PANEL_SUBS` (`a,b` = custom; empty = disable)
+  overrides the profile. Same 3-mode semantics as `FUSION_ROUTER`.
 - `--openrouter` early-delegates to `fusion.delegate.main` (legacy).
 
 ## Hardening contract (v1.3.0)
@@ -117,7 +119,7 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
 fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
 fusion --preset mixed "<Q>"                   # always subs + default PAYG panel
-fusion --preset cheap "<Q>"                   # low-cost OpenRouter panel
+fusion --preset cheap "<Q>"                   # low-cost direct-provider panel
 fusion --preset ultra --current-model "$MODEL" "<Q>"
 fusion --preset ultra --cloud-judge --cloud-model deepseek/deepseek-v4-pro "<Q>"
 fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
@@ -153,23 +155,25 @@ fusion --version
 
 ## Model routing
 
-- **Panel lane 1 ($0 subs)**: `["codex-spark", "agy35-flash", "kimic", "zai", "grok"]`.
-  `grok` = Grok 4.5 via Grok Build CLI (SuperGrok sub, seat added 2026-07-17).
+- **Panel lane 1 ($0 subs)** is profile-driven:
+  - `balanced`: `claude-sonnet`, `kimic`, `zai`.
+  - `coding`: `codex-spark`, `claude-sonnet`, `kimic`, `grok`.
+  - `reasoning`: `claude-opus`, `codex-frontier`, `agy35-flash`, `kimic`, `zai`.
+  - `fast`: `codex-quick`, `agy35-flash`, `zai`.
+  - `specialists`: `kimic`, `zai`, `mimo`, `grok`.
+  `grok` is the Grok Build coding seat; `mini` (M2.7) is excluded from named
+  profiles because M3 supersedes it, but remains available by explicit override.
+  `claude-fable` is credit-only and rejected from lane 1; use `ultra` so its
+  provider and metered cost remain explicit.
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro` (first-party
   `api.deepseek.com` since 2026-07-17 — same weights, no OpenRouter markup),
-  `qwen3.7-max` (OpenRouter).
-- **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
-- **Intelligence preset**: `x-ai/grok-4.5`, `~google/gemini-pro-latest`,
-  `openai/gpt-5.6-terra`, `deepseek-v4-pro` (first-party). Frontier-accessible, 4
-  families (xAI/Google/OpenAI/DeepSeek), deliberately EXCLUDING the premium
-  closed seats (`claude-fable-5` $50, `gpt-5.6-sol-pro` $30, `claude-opus-4.8`
-  $25 per M output) that ultra reserves for high-stakes work. ~5x cheaper than
-  ultra per deliberation.
-- **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.6-sol-pro`,
-  `~google/gemini-pro-latest`, `x-ai/grok-4.5`. GPT-5.6 Sol Pro and Grok 4.5
-  verified in the live OpenRouter catalog (2026-07-12); legacy `gpt-5.5-pro`
-  dropped. Gemini kept on the `~google/gemini-pro-latest` alias because Google
-  exposes no pinned pro ID beyond it.
+  `qwen3.7-max` (ZenMux).
+- **Cheap preset**: `deepseek-v4-flash` (DeepInfra) + `minimax-m3` (ZenMux).
+  Dominated Qwen Plus and general-purpose MiMo seats are intentionally absent.
+- **Intelligence preset**: `x-ai/grok-4.5`, `openai/gpt-5.6-terra`,
+  `z-ai/glm-5.2` (ZenMux). Three strong, nonredundant families.
+- **Ultra preset**: `claude-fable-5`, `gpt-5.6-sol-pro`, `x-ai/grok-4.5`.
+  Dominated Opus/Gemini siblings are intentionally absent.
 - **Judge**: local-first; `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"`
   pins T2. `--cloud-judge` skips T1; `--cloud-model` selects that T2 model.
 - **Current-model exclusion**: `--current-model` or env (`FUSION_CURRENT_MODEL`,
@@ -179,21 +183,21 @@ fusion --version
 
 ## Preset selection by complexity
 
-Cost is output $/M tokens (live OpenRouter, 2026-07-12). The controller decides
+Cost is output $/M tokens (live provider catalogs, 2026-07-19). The controller decides
 when to invoke fusion and which preset fits the stakes — fusion itself never
 auto-invokes. Pick the cheapest panel whose downside-risk you can tolerate.
 
 | Preset | Seats | Output $/M range | Use when | Avoid when |
 |---|---|---|---|---|
-| `subs` | 5 | $0 (subscription) | default first pass; controller has subs quota left | quota exhausted or non-Claude CLI without `FUSION_ROUTER` |
-| `cheap` | 4 | $0.15–1.28 | low-stakes sanity check, second opinion on routine code | irreversible / security / architecture |
-| `payg` | 2 | $0.87–3.75 | general deliberation, open-capable diversity | need frontier reasoning depth |
-| `intelligence` | 4 | $6–15 | medium-high complexity: design tradeoffs, hard bugs, unfamiliar APIs | trivial work (waste) or truly irreversible (use ultra) |
-| `ultra` | 5 | $6–50 | HIGH-STAKES only: migrations, security/auth, prod deploys, irreversible architecture | anything reversible or low-complexity — premium seats ($25–50/M) burn budget for no gain |
-| `mixed` | 7 | $0–3.75 | want subs diversity AND a PAYG floor | tight cost budget |
+| `subs` | 3–5 | $0 (subscription) | task-specific first pass; controller has subs quota left | quota exhausted or non-Claude CLI without `FUSION_ROUTER` |
+| `cheap` | 2 | $0.18–1.10 | low-stakes sanity check, second opinion on routine code | irreversible / security / architecture |
+| `payg` | 2 | $0.87–1.29 | general deliberation, open-capable diversity | need frontier reasoning depth |
+| `intelligence` | 3 | $3.08–15 | medium-high complexity: design tradeoffs, hard bugs, unfamiliar APIs | trivial work (waste) or truly irreversible (use ultra) |
+| `ultra` | 3 | $6–50 | HIGH-STAKES only: migrations, security/auth, prod deploys, irreversible architecture | anything reversible or low-complexity — premium seats burn budget for no gain |
+| `mixed` | 5 | $0–1.29 | want subs diversity AND a PAYG floor | tight cost budget |
 
 **Rule of thumb:** escalate `cheap → payg → intelligence → ultra` only when the
 cost of being wrong exceeds the cost of the extra completions. `ultra`'s premium
-seats (fable-5, sol-pro, opus-4.8) are for irreversible/high-stakes work; for
+seats (fable-5 and sol-pro) are for irreversible/high-stakes work; for
 medium-high complexity use `intelligence` (frontier voices without the premium
 tax).

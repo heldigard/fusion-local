@@ -10,12 +10,16 @@ from ._boundary import MAX_EXTERNAL_RESPONSE_BYTES
 from ._version import __version__
 from .judge import CHEAP_LLM_MIN_VERSION, preflight
 from .panel import (
+    CREDIT_ONLY_WORKERS,
     CURRENT_MODEL_ENV_KEYS,
     PANEL_PAYG,
     PANEL_PRESETS,
     PANEL_SUBS,
     PANEL_SUBS_ENV,
+    PANEL_SUBS_PROFILE_ENV,
     PAYG_PRESETS,
+    SUBS_PROFILE_DEFAULT,
+    SUBS_PROFILES,
 )
 
 
@@ -41,11 +45,13 @@ def capabilities_payload() -> dict[str, Any]:
 # (cli-orchestration doctor treats this as the authoritative field list).
 # Always present: schema_version, status, preset, the five analysis fields,
 # judge_model, judge_valid, sources, panel_quorum, total_latency, total_known_cost.
-# Conditional: error + panel_evidence (degraded); current_model (controller detected).
+# Conditional: error + panel_evidence (degraded); current_model (controller detected);
+# subs_profile (subscription and mixed presets).
 FUSE_ENVELOPE_FIELDS: tuple[str, ...] = (
     "schema_version",
     "status",
     "preset",
+    "subs_profile",
     "consensus",
     "contradictions",
     "coverage_gaps",
@@ -80,6 +86,7 @@ def _fuse_capability() -> dict[str, Any]:
             "preset": list(PANEL_PRESETS),
             "timeout_seconds": "positive integer",
             "min_workers": "positive integer",
+            "subs_profile": list(SUBS_PROFILES),
             "cloud_model": "pinned T2 judge fallback model",
             "cloud_judge": "boolean; skip local T1 judge when true",
         },
@@ -180,11 +187,15 @@ def _preset_details() -> dict[str, dict[str, Any]]:
         "subs": {
             "lanes": ["subscription", "payg-fallback"],
             "nominal_seats": len(PANEL_SUBS),
+            "profile": SUBS_PROFILE_DEFAULT,
+            "profiles": SUBS_PROFILES,
+            "blocked_credit_modes": sorted(CREDIT_ONLY_WORKERS),
             "fallback": "default PAYG only when successful subscription seats are below quorum",
         },
         "mixed": {
             "lanes": ["subscription", "payg"],
             "nominal_seats": len(PANEL_SUBS) + len(PANEL_PAYG),
+            "profile": SUBS_PROFILE_DEFAULT,
             "fallback": "none; both lanes always run",
         },
     }
@@ -204,6 +215,7 @@ def _health_payload() -> dict[str, Any]:
         "cheap_llm_min_version": CHEAP_LLM_MIN_VERSION,
         "router_env": "FUSION_ROUTER",
         "panel_subs_env": PANEL_SUBS_ENV,
+        "panel_subs_profile_env": PANEL_SUBS_PROFILE_ENV,
         "router_protocol": "fusion-panel-v1",
         "judge_policy": "local-first by default; --cloud-judge selects pinned T2 directly",
         "max_external_response_bytes": MAX_EXTERNAL_RESPONSE_BYTES,
@@ -223,4 +235,5 @@ def _live_probes() -> dict[str, Any]:
         "openrouter_key_present": bool(os.environ.get("OPENROUTER_API_KEY", "").strip()),
         "deepseek_key_present": bool(os.environ.get("DEEPSEEK_API_KEY", "").strip()),
         "deepinfra_key_present": bool(os.environ.get("DEEPINFRA_API_KEY", "").strip()),
+        "zenmux_key_present": bool(os.environ.get("ZENMUX_API_KEY", "").strip()),
     }
