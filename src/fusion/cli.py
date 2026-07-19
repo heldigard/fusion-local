@@ -5,6 +5,11 @@ panel feature to the judge feature and attaches sources/latency metadata.
 ``--openrouter`` early-delegates to ``fusion.delegate`` with all args intact.
 """
 
+# vs-soft-allow — fuse() is one cohesive orchestration pipeline (validate →
+# preflight → panel → judge → attach envelope metadata); its length is defensive
+# metadata/quorum/cost wiring, not mixed responsibilities. Splitting would hurt
+# clarity without separating concerns.
+
 from __future__ import annotations
 
 import argparse
@@ -117,9 +122,16 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
         if isinstance(r.get("usage"), dict)
         and isinstance(r.get("usage", {}).get("cost", 0), (int, float))
     )
+    # total_known_cost is an always-present envelope field (see capabilities
+    # FUSE_ENVELOPE_FIELDS). A degraded judge may omit cost or return a
+    # non-numeric value; default it to 0.0 so the field is emitted regardless.
     judge_cost = jd.get("cost", 0)
-    if isinstance(judge_cost, (int, float)) and not isinstance(judge_cost, bool):
-        jd["total_known_cost"] = panel_cost + float(judge_cost)
+    safe_judge_cost = (
+        float(judge_cost)
+        if isinstance(judge_cost, (int, float)) and not isinstance(judge_cost, bool)
+        else 0.0
+    )
+    jd["total_known_cost"] = panel_cost + safe_judge_cost
     if current_model:
         jd["current_model"] = current_model
     return jd

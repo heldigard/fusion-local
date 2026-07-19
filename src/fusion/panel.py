@@ -1,9 +1,9 @@
 """Panel feature — gather N diverse model responses (lanes + orchestration).
 
-Lane 1 ($0 subs): cworker router → codex-spark/agy35-flash/kimic/zai (Claude
-ecosystem). Lane 2 (PAYG, universal cross-CLI): HTTP direct to OpenRouter. The
-orchestration runs lane 1, falls back to lane 2 when fewer than ``min_workers``
-succeed.
+Lane 1 ($0 subs): cworker router → codex-spark/agy35-flash/kimic/zai/grok
+(Claude ecosystem shim). Lane 2 (PAYG, universal cross-CLI): HTTP direct to
+OpenRouter. The orchestration runs lane 1, falls back to lane 2 when fewer than
+``min_workers`` succeed.
 
 The model catalog (``panel_models``) and current-controller-model detection
 (``panel_current``) live in sibling modules; this module re-exports their

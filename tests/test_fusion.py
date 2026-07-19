@@ -26,6 +26,7 @@ import fusion.cli as fcli
 import fusion.judge as judge_mod
 import fusion.panel as panel_mod
 from fusion import FuseOptions, fuse
+from fusion.capabilities import FUSE_ENVELOPE_FIELDS
 
 PASS = 0
 FAIL = 0
@@ -302,6 +303,37 @@ def test_panel_excludes_current_subscription_model() -> None:
         str(calls),
     )
     check("current subscription skip reported", any(r.get("skipped") for r in res), str(res))
+
+
+def test_panel_excludes_current_grok_seat() -> None:
+    calls: list[str] = []
+
+    def fake_cworker(mode, _task, _timeout):
+        calls.append(mode)
+        return {"source": mode, "lane": "subscription", "success": True, "output": "o"}
+
+    with (
+        patch.object(panel_mod, "_cworker_worker", fake_cworker),
+        patch.object(panel_mod, "_http_worker", lambda *_args: {"success": False}),
+    ):
+        res = panel_mod.run_panel(
+            "task",
+            preset="subs",
+            min_workers=1,
+            current_model="x-ai/grok-4.5",
+        )
+    check("current grok worker not called", "grok" not in calls, str(calls))
+    check(
+        "other subscription workers still called",
+        "codex-spark" in calls and "zai" in calls,
+        str(calls),
+    )
+    skipped = [r for r in res if r.get("skipped")]
+    check(
+        "grok skip reported",
+        bool(skipped) and skipped[0]["source"] == "grok",
+        str(res),
+    )
 
 
 def test_detect_current_model_ignores_non_object_identity() -> None:
@@ -1180,6 +1212,99 @@ def test_fuse_echoes_current_model() -> None:
     )
 
 
+def test_fuse_envelope_matches_declared_contract() -> None:
+    with (
+        patch.object(
+            panel_mod,
+            "_cworker_worker",
+            lambda m, _t, _to: {
+                "source": m,
+                "lane": "subscription",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch(
+            "cheap_llm.cheap_complete",
+            _fake_cheap_complete(
+                {
+                    "consensus": "C",
+                    "contradictions": [],
+                    "coverage_gaps": [],
+                    "unique_insights": [],
+                    "blind_spots": [],
+                }
+            ),
+        ),
+    ):
+        out = fuse("task", opts=FuseOptions(preset="subs", min_workers=1))
+    envelope_keys = set(out)
+    declared = set(FUSE_ENVELOPE_FIELDS)
+    check(
+        "no undeclared envelope keys leak",
+        envelope_keys <= declared,
+        str(envelope_keys - declared),
+    )
+    # error/panel_evidence/current_model are intentionally conditional; the rest
+    # of the declared field set must always be present on a successful fuse().
+    always_present = declared - {"error", "panel_evidence", "current_model"}
+    check(
+        "declared always-present fields emitted",
+        always_present <= envelope_keys,
+        str(always_present - envelope_keys),
+    )
+    check("total_known_cost emitted on success", "total_known_cost" in out, str(out))
+
+
+def test_fuse_total_known_cost_present_on_nonnumeric_judge_cost() -> None:
+    envelope = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+    # Defensive case: provider returns a valid 5-field envelope but a non-numeric
+    # usage cost. total_known_cost is an always-present contract field, so it must
+    # still be emitted (defaulting the judge share to 0), never omitted.
+    payload = {
+        "text": json.dumps(envelope),
+        "model": "deepseek/deepseek-v4-flash",
+        "tier": "T2",
+        "latency": 1.0,
+        "cost": "not-a-number",
+        "json_valid": True,
+        "fields_ok": True,
+        "attempts": [],
+        "error": None,
+    }
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", lambda system, prompt, **kw: payload),
+    ):
+        out = fuse("task", opts=FuseOptions(preset="cheap"))
+    check(
+        "non-numeric judge cost still yields total_known_cost",
+        "total_known_cost" in out,
+        str(out),
+    )
+    value = out.get("total_known_cost")
+    check(
+        "total_known_cost numeric on non-numeric judge cost",
+        isinstance(value, (int, float)) and not isinstance(value, bool),
+        str(value),
+    )
+
+
 def test_cli_main_json() -> None:
     env = {
         "consensus": "C",
@@ -1618,6 +1743,7 @@ TESTS = [
     ("panel_invalid_inputs_block_dispatch", test_panel_invalid_inputs_block_dispatch),
     ("panel_excludes_current_payg_model", test_panel_excludes_current_payg_model),
     ("panel_excludes_current_subscription_model", test_panel_excludes_current_subscription_model),
+    ("panel_excludes_current_grok_seat", test_panel_excludes_current_grok_seat),
     (
         "detect_current_model_ignores_non_object_identity",
         test_detect_current_model_ignores_non_object_identity,
@@ -1690,6 +1816,11 @@ TESTS = [
     ("fuse_preserves_metadata_on_judge_exception", test_fuse_preserves_metadata_on_judge_exception),
     ("fuse_invalid_inputs_block_preflight", test_fuse_invalid_inputs_block_preflight),
     ("fuse_echoes_current_model", test_fuse_echoes_current_model),
+    ("fuse_envelope_matches_declared_contract", test_fuse_envelope_matches_declared_contract),
+    (
+        "fuse_total_known_cost_present_on_nonnumeric_judge_cost",
+        test_fuse_total_known_cost_present_on_nonnumeric_judge_cost,
+    ),
     ("cli_main_json", test_cli_main_json),
     ("cli_cloud_judge_flag", test_cli_cloud_judge_flag),
     ("cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),

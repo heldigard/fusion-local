@@ -65,7 +65,7 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
   empty = disable lane-1). Same 3-mode semantics as `FUSION_ROUTER`.
 - `--openrouter` early-delegates to `fusion.delegate.main` (legacy).
 
-## Hardening contract (v1.2.0)
+## Hardening contract (v1.3.0)
 
 - **Judge preflight before panel spend**: `fuse()` gates on `judge.preflight()`
   (cheap_llm import + `require(CHEAP_LLM_MIN_VERSION)`) BEFORE the panel fan-out.
