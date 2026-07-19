@@ -25,6 +25,7 @@ from ._boundary import (
     scrub_external_text,
 )
 from ._version import __version__
+from .panel_models import HTTP_REFERER, HTTP_TITLE
 
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 FUSION_MODEL = "openrouter/fusion"
@@ -112,8 +113,8 @@ def _call(payload: dict[str, Any], key: str, timeout_s: int = DEFAULT_TIMEOUT_S)
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://claude.local/fusion",
-            "X-Title": "fusion",
+            "HTTP-Referer": HTTP_REFERER,
+            "X-Title": HTTP_TITLE,
         },
     )
     try:

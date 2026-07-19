@@ -20,6 +20,11 @@ OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
 DEEPINFRA_KEY_ENV = "DEEPINFRA_API_KEY"
 
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_KEY_ENV = "DEEPSEEK_API_KEY"
+HTTP_REFERER = "https://github.com/heldigard/fusion-local"
+HTTP_TITLE = "fusion-local"
+
 # Lane 1: $0 subscription workers, diverse families. Routed via config.ROUTER
 # (codex=gpt-5.x, agy=gemini, kimic=kimi, zai=glm, grok=xAI).
 PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai", "grok"]
@@ -28,15 +33,16 @@ PANEL_SUBS: list[str] = ["codex-spark", "agy35-flash", "kimic", "zai", "grok"]
 # unset → PANEL_SUBS default; "" → disable lane-1; "a,b" → custom worker modes.
 PANEL_SUBS_ENV = "FUSION_PANEL_SUBS"
 
-# Lane 2: PAYG fallback (HTTP direct, OpenRouter) — universal cross-CLI. PAYG
-# stays strong but economical; cheap/intelligence/ultra presets are explicit so
-# the controller can pick cost vs depth intentionally. Cost tiers (output $/M):
+# Lane 2: PAYG fallback (HTTP direct) — universal cross-CLI. deepseek-v4-pro is
+# first-party api.deepseek.com (same weights, no OpenRouter markup); other seats
+# use OpenRouter. cheap/intelligence/ultra presets are explicit so the controller
+# can pick cost vs depth intentionally. Cost tiers (output $/M):
 #   cheap        ~$0.15-1.28  — economical open models
 #   payg         ~$0.87-3.75  — open capable (default deliberation)
 #   intelligence ~$6-15       — frontier-accessible, NO premium $25-50/M seats
 #   ultra        ~$6-50       — full frontier incl. premium closed (fable/sol-pro/opus)
 PANEL_PAYG: list[tuple[str, str, str, str]] = [
-    ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
+    ("deepseek-v4-pro", DEEPSEEK_URL, "deepseek-v4-pro", DEEPSEEK_KEY_ENV),
     ("qwen3.7-max", OPENROUTER_URL, "qwen/qwen3.7-max", OPENROUTER_KEY_ENV),
 ]
 
@@ -64,7 +70,7 @@ PANEL_INTELLIGENCE: list[tuple[str, str, str, str]] = [
     ("grok-4.5", OPENROUTER_URL, "x-ai/grok-4.5", OPENROUTER_KEY_ENV),
     ("gemini-pro-latest", OPENROUTER_URL, "~google/gemini-pro-latest", OPENROUTER_KEY_ENV),
     ("gpt-5.6-terra", OPENROUTER_URL, "openai/gpt-5.6-terra", OPENROUTER_KEY_ENV),
-    ("deepseek-v4-pro", OPENROUTER_URL, "deepseek/deepseek-v4-pro", OPENROUTER_KEY_ENV),
+    ("deepseek-v4-pro", DEEPSEEK_URL, "deepseek-v4-pro", DEEPSEEK_KEY_ENV),
 ]
 
 PAYG_PRESETS: dict[str, list[Spec]] = {

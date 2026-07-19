@@ -175,7 +175,7 @@ def test_panel_intelligence_uses_frontier_accessible_no_premium() -> None:
         "intelligence includes gemini pro latest", "~google/gemini-pro-latest" in calls, str(calls)
     )
     check("intelligence includes gpt 5.6 terra", "openai/gpt-5.6-terra" in calls, str(calls))
-    check("intelligence includes deepseek v4 pro", "deepseek/deepseek-v4-pro" in calls, str(calls))
+    check("intelligence includes deepseek v4 pro", "deepseek-v4-pro" in calls, str(calls))
     # Intelligence deliberately excludes the premium closed seats ultra reserves
     # for high-stakes work (fable $50, sol-pro $30, opus $25 per M output).
     check("intelligence excludes fable 5", "anthropic/claude-fable-5" not in calls, str(calls))
@@ -858,7 +858,13 @@ def test_payg_model_ids_are_current_shape() -> None:
     check("deepseek payg model present", len(deepseek) == 1, str(deepseek))
     check("deepseek reasoner stale id removed", deepseek[0][2] != "deepseek/deepseek-reasoner")
     check("deepseek v3.2 stale id removed", deepseek[0][2] != "deepseek/deepseek-v3.2")
-    check("deepseek model is v4 pro", deepseek[0][2] == "deepseek/deepseek-v4-pro")
+    check("deepseek model is v4 pro", deepseek[0][2] == "deepseek-v4-pro")
+    check("deepseek uses first-party api", "api.deepseek.com" in deepseek[0][1], str(deepseek[0]))
+    check(
+        "deepseek uses DEEPSEEK_API_KEY",
+        deepseek[0][3] == panel_mod.DEEPSEEK_KEY_ENV,
+        str(deepseek[0]),
+    )
     qwen = [spec for spec in panel_mod.PANEL_PAYG if spec[0].startswith("qwen")]
     check("qwen payg model present", len(qwen) == 1, str(qwen))
     canonical = [spec[0].removesuffix("-di") for spec in panel_mod.PANEL_PAYG]
@@ -903,7 +909,7 @@ def test_payg_model_ids_are_current_shape() -> None:
     )
     check(
         "intelligence includes deepseek v4 pro",
-        "deepseek/deepseek-v4-pro" in intel_ids,
+        "deepseek-v4-pro" in intel_ids,
         str(intel_ids),
     )
     check(
@@ -1677,6 +1683,8 @@ def test_capabilities_health_live() -> None:
     check("live reports cheap_llm version", bool(live["cheap_llm_version"]), str(live))
     check("live router probe is bool", isinstance(live["router_available"], bool))
     check("live key probe is bool", isinstance(live["openrouter_key_present"], bool))
+    check("live deepseek key probe is bool", isinstance(live["deepseek_key_present"], bool))
+    check("live deepinfra key probe is bool", isinstance(live["deepinfra_key_present"], bool))
 
 
 def test_cli_json_exit_reflects_judge_validity() -> None:

@@ -221,4 +221,6 @@ def _live_probes() -> dict[str, Any]:
         "cheap_llm_version": gate["version"],
         "router_available": bool(config.ROUTER and config.ROUTER.is_file()),
         "openrouter_key_present": bool(os.environ.get("OPENROUTER_API_KEY", "").strip()),
+        "deepseek_key_present": bool(os.environ.get("DEEPSEEK_API_KEY", "").strip()),
+        "deepinfra_key_present": bool(os.environ.get("DEEPINFRA_API_KEY", "").strip()),
     }

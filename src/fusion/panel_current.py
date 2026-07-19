@@ -33,6 +33,8 @@ CURRENT_MODEL_ENV_KEYS = (
     "OPENCODE_MODEL",
     "KIMI_MODEL",
     "QWEN_MODEL",
+    "GROK_MODEL",
+    "XAI_MODEL",
 )
 
 

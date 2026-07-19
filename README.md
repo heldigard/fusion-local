@@ -31,14 +31,17 @@ returns assistant text (requested as five labeled sections by this CLI).
 
 ```
 src/fusion/
-├── _boundary.py   shared input/error/scrub contracts for external boundaries
-├── _version.py    canonical installed-version resolution
-├── config.py       constants + cross-CLI wiring (FUSION_ROUTER, cheap_llm bootstrap)
-├── panel.py        feature: lane-1 (cworker subs) + lane-2 (HTTP PAYG) + orchestration
-├── judge.py        feature: 5-field schema + cheap_llm judge synthesis
-├── delegate.py     feature: legacy OpenRouter hosted fusion (--openrouter)
-├── cli.py          feature: fuse() + main() + FuseOptions (parameter object)
-└── __init__.py     public API
+├── _boundary.py     shared input/error/scrub contracts for external boundaries
+├── _version.py      canonical installed-version resolution
+├── config.py        constants + cross-CLI wiring (FUSION_ROUTER, cheap_llm bootstrap)
+├── panel_models.py  model catalog: types, presets, MODEL_ALIASES, WORKER_GUARD (pure data)
+├── panel_current.py current-controller detection + panel-seat exclusion/matching
+├── panel.py         feature: lane-1 (cworker subs) + lane-2 (HTTP PAYG) + orchestration
+├── judge.py         feature: 5-field schema + cheap_llm judge synthesis
+├── delegate.py      feature: legacy OpenRouter hosted fusion (--openrouter)
+├── cli.py           feature: fuse() + main() + FuseOptions (parameter object)
+├── capabilities.py  machine-readable capability manifest (doctor/router consumer)
+└── __init__.py      public API
 tests/
 ├── test_fusion.py     panel + judge + fuse + CLI contracts (offline, mocked)
 └── test_delegate.py   hosted payload/transport/stream/exit contracts (offline, mocked)
@@ -175,11 +178,13 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 
 - **Panel lane 1 ($0 subs)**: `codex-spark`, `agy35-flash`, `kimic`, `zai`, `grok`
   (cross-family).
-- **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro`, `qwen3.7-max` (OpenRouter HTTP).
+- **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro` (first-party
+  `api.deepseek.com` since 2026-07-17 — same weights, no OpenRouter markup),
+  `qwen3.7-max` (OpenRouter).
 - **Mixed preset**: all configured subscription workers plus the default PAYG panel.
 - **Cheap preset**: `deepseek-v4-flash`, `qwen3.7-plus`, `minimax-m3`, `mimo-v2.5-pro`.
 - **Intelligence preset**: `x-ai/grok-4.5`, `~google/gemini-pro-latest`,
-  `openai/gpt-5.6-terra`, `deepseek/deepseek-v4-pro`. Frontier-accessible, 4
+  `openai/gpt-5.6-terra`, `deepseek-v4-pro` (first-party). Frontier-accessible, 4
   families, NO premium $25–50/M seats — for medium-high complexity without the
   ultra tax (~5x cheaper than ultra).
 - **Ultra preset**: `claude-fable-5`, `claude-opus-4.8`, `gpt-5.6-sol-pro`,

@@ -39,6 +39,10 @@ from .panel_current import (  # noqa: F401 — re-exported (capabilities/tests)
     detect_current_model,
 )
 from .panel_models import (  # noqa: F401 — re-exported (public/test surface)
+    DEEPSEEK_KEY_ENV,
+    DEEPSEEK_URL,
+    HTTP_REFERER,
+    HTTP_TITLE,
     MODEL_ALIASES,
     OPENROUTER_KEY_ENV,
     OPENROUTER_URL,
@@ -212,8 +216,8 @@ def _http_worker(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://claude.local/fusion",
-            "X-Title": "fusion",
+            "HTTP-Referer": HTTP_REFERER,
+            "X-Title": HTTP_TITLE,
         },
     )
     try:
