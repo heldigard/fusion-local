@@ -105,7 +105,6 @@ def test_subscription_mode_model_mappings_are_exact() -> None:
     cases = (
         ("codex-coding", "openai/gpt-5.6-terra"),
         ("agy3-pro", "google/gemini-3.1-pro"),
-        ("agy-research", "Gemini 3.1 Pro (High)"),
         ("agy-opus", "Claude Opus 4.6 (Thinking)"),
         ("agy-sonnet", "Claude Sonnet 4.6 (Thinking)"),
         ("agy35-flash", "Gemini 3.5 Flash (Medium)"),

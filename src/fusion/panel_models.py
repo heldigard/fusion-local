@@ -123,13 +123,11 @@ SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "claude-sonnet": ("claude-sonnet-5", "anthropic/claude-sonnet-5"),
     "claude-opus": ("claude-opus-4.8", "anthropic/claude-opus-4.8"),
     "agy35-flash": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
-    "agy-preview": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
     # These mappings follow the exact inventory reported by ``agy models``.
     "agy3-pro": (
         "gemini-3.1-pro",
         "google/gemini-3.1-pro",
     ),
-    "agy-research": ("gemini-3.1-pro", "google/gemini-3.1-pro"),
     "agy-opus": (
         "claude-opus-4.6",
         "anthropic/claude-opus-4.6",
