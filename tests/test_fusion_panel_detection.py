@@ -107,6 +107,7 @@ def test_subscription_mode_model_mappings_are_exact() -> None:
         ("agy3-pro", "google/gemini-3.1-pro"),
         ("agy-opus", "Claude Opus 4.6 (Thinking)"),
         ("agy-sonnet", "Claude Sonnet 4.6 (Thinking)"),
+        ("agy36-flash", "Gemini 3.6 Flash (High)"),
         ("agy35-flash", "Gemini 3.5 Flash (Medium)"),
         ("qwen-cli", "qwen/qwen3.7-max"),
     )

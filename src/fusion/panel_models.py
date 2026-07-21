@@ -57,9 +57,9 @@ SUBS_PROFILES: dict[str, tuple[str, ...]] = {
     "coding": ("codex-spark", "claude-sonnet", "kimic", "grok"),
     # Architecture and difficult reasoning. Opus stays inside the Claude
     # subscription; credit-only Fable is reserved for the explicit ultra tier.
-    "reasoning": ("claude-opus", "codex-frontier", "agy35-flash", "kimic", "zai"),
+    "reasoning": ("claude-opus", "codex-frontier", "agy36-flash", "kimic", "zai"),
     # High-volume triage where latency and subscription conservation dominate.
-    "fast": ("codex-quick", "agy35-flash", "zai"),
+    "fast": ("codex-quick", "agy36-flash", "zai"),
     # Specialist diversity.  MiniMax M2.7 is intentionally absent because M3
     # supersedes it; the legacy ``mini`` seat remains available only by an
     # explicit FUSION_PANEL_SUBS override.
@@ -132,7 +132,8 @@ SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "codex-deep": ("gpt-5.6-sol", "openai/gpt-5.6-sol"),
     "claude-sonnet": ("claude-sonnet-5", "anthropic/claude-sonnet-5"),
     "claude-opus": ("claude-opus-4.8", "anthropic/claude-opus-4.8"),
-    "agy35-flash": ("gemini-3.5-flash", "google/gemini-3.5-flash"),
+    "agy36-flash": ("gemini-3.6-flash", "google/gemini-3.6-flash", "Gemini 3.6 Flash (High)"),
+    "agy35-flash": ("gemini-3.6-flash", "google/gemini-3.6-flash", "gemini-3.5-flash", "Gemini 3.5 Flash (Medium)"),
     # These mappings follow the exact inventory reported by ``agy models``.
     "agy3-pro": (
         "gemini-3.1-pro",

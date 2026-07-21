@@ -72,7 +72,7 @@ def test_panel_subs_includes_all_documented_subscription_families() -> None:
         {
             "codex-spark",
             "claude-sonnet",
-            "agy35-flash",
+            "agy36-flash",
             "kimic",
             "zai",
             "mimo",
