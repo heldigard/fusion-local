@@ -25,6 +25,16 @@ DEEPSEEK_KEY_ENV = "DEEPSEEK_API_KEY"
 
 ZENMUX_URL = "https://zenmux.ai/api/v1/chat/completions"
 ZENMUX_KEY_ENV = "ZENMUX_API_KEY"
+
+# Alibaba Cloud Model Studio — Qwen Coding Plan (Token Plan Singapore). First-party
+# subscription endpoint; cheaper than ZenMux for the same weights. The router
+# (``FUSION_ROUTER``/cli-orchestration) launches the ``qwenc`` Claude Code wrapper
+# as a lane-1 seat; this constant is reserved for future first-party direct calls.
+QWEN_ALIYUN_URL = (
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+)
+QWEN_API_KEY_ENV = "QWEN_API_KEY"
+
 HTTP_REFERER = "https://github.com/heldigard/fusion-local"
 HTTP_TITLE = "fusion-local"
 
@@ -53,7 +63,7 @@ SUBS_PROFILES: dict[str, tuple[str, ...]] = {
     # Specialist diversity.  MiniMax M2.7 is intentionally absent because M3
     # supersedes it; the legacy ``mini`` seat remains available only by an
     # explicit FUSION_PANEL_SUBS override.
-    "specialists": ("kimic", "zai", "mimo", "grok"),
+    "specialists": ("kimic", "zai", "mimo", "grok", "qwenc"),
 }
 SUBS_PROFILE_NAMES: tuple[str, ...] = tuple(SUBS_PROFILES)
 
@@ -153,6 +163,16 @@ SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "zai": ("glm-5.2", "z-ai/glm-5.2"),
     "mini": ("minimax-m2.7", "minimax/minimax-m2.7"),
     "mimo": ("mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro"),
+    # Alibaba Qwen Coding Plan (Token Plan Singapore) — top preview qwen3.8-max-preview
+    # plus stable qwen3.7-max and qwen3.7-plus spellings. Excluded when the controller
+    # itself runs a Coding Plan model so the seat cannot echo-chamber the brain.
+    "qwenc": (
+        "qwen3.8-max-preview",
+        "qwen/qwen3.8-max-preview",
+        "qwen3.7-max",
+        "qwen/qwen3.7-max",
+        "Qwen/Qwen3.8-Max-Preview",
+    ),
     "qwen-cli": ("qwen3.7-max", "qwen/qwen3.7-max"),
     # Grok Build CLI is a coding seat.  Keep the 4.5 aliases as compatibility
     # spellings because the subscription service may report the backing model.
@@ -202,6 +222,13 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "qwen/qwen3.7-max": ("qwen3.7-max", "qwen/qwen3.7-max", "qwen3.7-max-di", "Qwen/Qwen3.7-Max"),
     "qwen/qwen3.7-plus": ("qwen3.7-plus", "qwen/qwen3.7-plus"),
+    "qwen/qwen3.8-max-preview": (
+        "qwen3.8-max-preview",
+        "qwen3.8-max",
+        "qwen/qwen3.8-max-preview",
+        "Qwen/Qwen3.8-Max-Preview",
+    ),
+    "qwen/qwen3.6-flash": ("qwen3.6-flash", "qwen/qwen3.6-flash", "Qwen/Qwen3.6-Flash"),
     "minimax/minimax-m3": ("minimax-m3", "minimax-3"),
     "minimax/minimax-m2.7": ("minimax-m2.7", "minimax-2.7"),
     "xiaomi/mimo-v2.5-pro": ("mimo-v2.5-pro", "mimo-2.5-pro"),
