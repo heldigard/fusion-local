@@ -332,8 +332,17 @@ def test_fuse_requires_final_panel_quorum() -> None:
     check("one-seat panel does not call judge", judge_calls == [], str(judge_calls))
     check("one-seat panel degrades", out["judge_valid"] is False, str(out))
     check(
-        "quorum metadata is explicit",
-        out["panel_quorum"] == {"required": 2, "successful": 1, "met": False},
+        "quorum metadata is explicit and carries per-seat status",
+        out["panel_quorum"]
+        == {
+            "required": 2,
+            "successful": 1,
+            "met": False,
+            "seats": [
+                {"source": "deepseek-v4-pro", "lane": "payg", "outcome": "responded"},
+                {"source": "qwen3.7-max-zm", "lane": "payg", "outcome": "failed"},
+            ],
+        },
         str(out["panel_quorum"]),
     )
 

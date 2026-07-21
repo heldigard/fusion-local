@@ -36,6 +36,7 @@ from .panel import (
     SUBS_PROFILE_DEFAULT,
     SUBS_PROFILE_NAMES,
     detect_current_model,
+    panel_seat_status,
     resolve_subs_profile,
     run_panel,
 )
@@ -47,7 +48,10 @@ class FuseOptions:
 
     preset: str = "subs"
     cloud_model: str | None = DEFAULT_JUDGE_MODEL
-    panel_timeout: int = 60
+    # Reasoning-tier seats (Opus/Kimi/GLM/Grok/Sol) legitimately run 60-120s;
+    # the prior 60s default starved them and dropped quorum. Fast seats are
+    # capped separately in panel._seat_timeout so flash/haiku still fail fast.
+    panel_timeout: int = 120
     judge_timeout: int = 30
     min_workers: int = 2
     current_model: str | None = None
@@ -94,11 +98,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             error=gate["error"],
             sources=[],
             preset=o.preset,
-            **(
-                {"subs_profile": resolved_subs_profile}
-                if o.preset in ("subs", "mixed")
-                else {}
-            ),
+            **({"subs_profile": resolved_subs_profile} if o.preset in ("subs", "mixed") else {}),
             panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
         )
@@ -121,11 +121,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             error="panel prompt scrub unavailable",
             sources=[],
             preset=o.preset,
-            **(
-                {"subs_profile": resolved_subs_profile}
-                if o.preset in ("subs", "mixed")
-                else {}
-            ),
+            **({"subs_profile": resolved_subs_profile} if o.preset in ("subs", "mixed") else {}),
             panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
         )
@@ -149,6 +145,9 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
         "required": o.min_workers,
         "successful": successful,
         "met": successful >= o.min_workers,
+        # Per-seat outcome lets the controller distinguish a timeout wall
+        # (several "timed_out") from genuine model disagreement on quorum loss.
+        "seats": panel_seat_status(pr),
     }
     panel_cost = sum(
         float(r.get("usage", {}).get("cost", 0))
@@ -239,7 +238,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the local T1 judge and use the pinned T2 cloud judge directly.",
     )
     parser.add_argument(
-        "--panel-timeout", type=positive_int_arg, default=60, help="Per-panelist timeout (s)."
+        "--panel-timeout",
+        type=positive_int_arg,
+        default=120,
+        help="Per-panelist timeout (s); fast-tier seats are internally capped.",
     )
     parser.add_argument(
         "--judge-timeout", type=positive_int_arg, default=30, help="Judge call timeout (s)."

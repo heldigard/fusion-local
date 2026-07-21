@@ -99,6 +99,16 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
 - **Per-source timings**: successful and failed lane workers expose
   `duration_seconds` in source metadata, so timeout tuning uses evidence rather
   than total-panel latency guesses.
+- **Tier-aware per-seat timeout**: reasoning seats (Opus/Kimi/GLM/Grok/Sol/Terra/Pro)
+  get the full `panel_timeout` (default 120s, raised from 60s); fast-tier seats
+  (`flash/haiku/lite/luna/quick/mini/mimo/v4-flash`) are capped at
+  `FAST_SEAT_TIMEOUT=60` so a hung fast worker fails fast instead of burning the
+  panel window. Root cause of the 2026-07-20 quorum loss: a flat 60s cap starved
+  reasoning seats while only the flash seat responded.
+- **Per-seat quorum status**: `panel_quorum.seats[]` carries `{source, lane, outcome}`
+  (`responded`/`timed_out`/`missing_key`/`skipped`/`failed`/`empty`) for every seat,
+  so a controller can distinguish a timeout wall from genuine model disagreement
+  when quorum fails.
 - **`--capabilities` live health**: `health.live` = `{cheap_llm_ok, cheap_llm_version,
   router_available, openrouter_key_present}` (local probes only; consumed by
   `cli-orchestration doctor`). `health.cheap_llm_min_version` is DRY from

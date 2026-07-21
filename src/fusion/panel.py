@@ -10,6 +10,14 @@ The model catalog (``panel_models``) and current-controller-model detection
 public names so ``from fusion.panel import X`` keeps working.
 """
 
+# vs-soft-allow — panel.py is one cohesive feature (gather N diverse model
+# responses via two lanes + orchestrate them). run_panel is the single
+# orchestration pipeline (validate -> lanes -> fallback -> deterministic
+# order), mirroring fuse() in cli.py; its parameter count and the mixed-preset
+# concurrent-lane nesting are intrinsic to that one responsibility, not mixed
+# concerns. The 2026-07-20 timeout work added flat helpers (_seat_timeout,
+# panel_seat_status) without raising run_panel's shape.
+
 from __future__ import annotations
 
 import json
@@ -66,6 +74,84 @@ from .panel_models import (  # noqa: F401 — re-exported (public/test surface)
     LaneWorker,
     Spec,
 )
+
+# --- Tier-aware per-seat timeout -------------------------------------------
+# Fast-tier seats (flash/haiku/lite/luna/quick/mini/mimo/DeepSeek-V4-Flash)
+# finish in seconds. Capping them keeps a hung fast worker from burning the
+# whole panel window. Reasoning seats (Opus/Kimi/GLM/Grok/Sol/Terra/Pro) get
+# the full ``panel_timeout`` — they legitimately run 60-120s and the prior
+# flat 60s cap starved them out of quorum (2026-07-20 incident: ``reasoning``
+# subs profile where only the flash seat responded while Opus/Kimi/GLM timed
+# out).
+FAST_SEAT_TIMEOUT = 60
+FAST_MODEL_MARKERS: tuple[str, ...] = (
+    "flash",
+    "haiku",
+    "lite",
+    "luna",
+    "quick",
+    "mini",
+    "mimo",
+    "v4-flash",
+)
+
+
+def _seat_model_id(worker: LaneWorker) -> str:
+    """Lowercase model id for tier classification.
+
+    PAYG ``Spec`` -> the bound model field (index 2); subscription ``mode`` ->
+    the first display model in ``SUBS_WORKER_MODELS`` (falls back to the mode
+    string itself, which still classifies correctly for ``codex-quick``).
+    """
+    if isinstance(worker, tuple) and worker:
+        # Spec = (alias, url, model_name, key_env)
+        return str(worker[2]).lower()
+    models = SUBS_WORKER_MODELS.get(str(worker), ())
+    return str(models[0]).lower() if models else str(worker).lower()
+
+
+def _seat_timeout(worker: LaneWorker, base_timeout: int) -> int:
+    """Per-seat timeout: reasoning seats get the full budget; fast-tier seats
+    are capped at ``FAST_SEAT_TIMEOUT`` so a hung flash/haiku worker fails fast
+    instead of consuming the whole panel window."""
+    if any(marker in _seat_model_id(worker) for marker in FAST_MODEL_MARKERS):
+        return min(base_timeout, FAST_SEAT_TIMEOUT)
+    return base_timeout
+
+
+def panel_seat_status(panel_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-seat outcome for diagnostics.
+
+    Lets the controller distinguish a *timeout wall* (several ``timed_out``)
+    from genuine *model disagreement* when quorum fails. Consumed by the
+    ``panel_quorum`` envelope in ``fuse()``. Covers every seat, not just the
+    successful ones that ``_panel_evidence`` preserves.
+    """
+    status: list[dict[str, Any]] = []
+    for result in panel_results:
+        source = str(result.get("source") or "unknown")
+        if result.get("skipped"):
+            outcome = "skipped"
+        elif isinstance(result.get("output"), str) and result["output"].strip():
+            outcome = "responded"
+        else:
+            err = str(result.get("error") or "").lower()
+            if "timeout" in err or "timed out" in err:
+                outcome = "timed_out"
+            elif "missing" in err and ("key" in err or "env" in err):
+                outcome = "missing_key"
+            elif result.get("success") is False:
+                outcome = "failed"
+            else:
+                outcome = "empty"
+        status.append(
+            {
+                "source": source,
+                "lane": str(result.get("lane") or "unknown"),
+                "outcome": outcome,
+            }
+        )
+    return status
 
 
 def _payg_panel_for_preset(preset: str) -> list[Spec]:
@@ -352,7 +438,9 @@ def _run_lane(
         return []
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=min(len(workers), 8)) as pool:
-        futs = {pool.submit(runner, w, task, timeout): w for w in workers}
+        # Per-seat timeout: reasoning seats get the full budget, fast-tier seats
+        # are capped (see _seat_timeout) so a hung flash/haiku worker fails fast.
+        futs = {pool.submit(runner, w, task, _seat_timeout(w, timeout)): w for w in workers}
         started = {future: time.monotonic() for future in futs}
         for fut in as_completed(futs):
             worker = futs[fut]
