@@ -141,6 +141,13 @@ def test_cli_cloud_judge_flag() -> None:
     check("CLI exposes explicit cloud-only judge", args.cloud_judge is True)
 
 
+def test_cli_payg_fallback_flag() -> None:
+    default = fcli._build_parser().parse_args(["Q?"])
+    opted_in = fcli._build_parser().parse_args(["Q?", "--allow-payg-fallback"])
+    check("CLI PAYG fallback defaults off", default.allow_payg_fallback is False)
+    check("CLI exposes explicit PAYG fallback authority", opted_in.allow_payg_fallback is True)
+
+
 def test_cli_version_uses_distribution_name() -> None:
     expected = distribution_version("fusion-local")
     check("package version from fusion-local dist", fusion.__version__ == expected)
@@ -186,6 +193,17 @@ def test_cli_capabilities_contract() -> None:
     check("fuse read-only", by_name["fuse"]["read_only"] is True, str(by_name["fuse"]))
     check("capabilities presets DRY", tuple(by_name["fuse"]["presets"]) == panel_mod.PANEL_PRESETS)
     check(
+        "capabilities expose PAYG authorization input",
+        "allow_payg_fallback" in by_name["fuse"]["inputs"],
+        str(by_name["fuse"]["inputs"]),
+    )
+    check(
+        "subscription preset is subscription-only by default",
+        by_name["fuse"]["preset_details"]["subs"]["lanes"] == ["subscription"]
+        and "explicit" in by_name["fuse"]["preset_details"]["subs"]["fallback"],
+        str(by_name["fuse"]["preset_details"]["subs"]),
+    )
+    check(
         "local JSON contract named",
         by_name["fuse"]["output_contracts"]["json"] == "fusion-envelope-v1",
     )
@@ -196,6 +214,12 @@ def test_cli_capabilities_contract() -> None:
     check(
         "health exposes cheap_llm",
         payload["health"]["cheap_llm_min_version"] == judge_mod.CHEAP_LLM_MIN_VERSION,
+    )
+    check(
+        "health exposes preset-scaled judge policy",
+        "intelligence/ultra" in payload["health"]["judge_policy"]
+        and "local-only" in payload["health"]["judge_policy"],
+        str(payload["health"]["judge_policy"]),
     )
 
 
@@ -368,6 +392,7 @@ TESTS = [
     ("test_payg_model_ids_are_current_shape", test_payg_model_ids_are_current_shape),
     ("test_cli_main_json", test_cli_main_json),
     ("test_cli_cloud_judge_flag", test_cli_cloud_judge_flag),
+    ("test_cli_payg_fallback_flag", test_cli_payg_fallback_flag),
     ("test_cli_version_uses_distribution_name", test_cli_version_uses_distribution_name),
     ("test_version_source_fallback_is_honest", test_version_source_fallback_is_honest),
     ("test_cli_capabilities_contract", test_cli_capabilities_contract),

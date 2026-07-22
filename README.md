@@ -17,9 +17,9 @@ Graduated from `~/.claude/scripts/fusion-local.py` (2026-07-06), following the
 Two deliberation modes with the same multi-perspective goal but different wire contracts:
 
 - **`fusion` (DEFAULT, local)** — a task-specific panel of subscription workers ($0)
-  drafts answers in parallel; a local-first cheap_llm
-  judge with `deepseek-v4-flash` as its T2 fallback synthesizes the 5-field schema. Falls
-  back to PAYG HTTP-direct panelists if subs are exhausted. Cost ≈ **$0–0.04**.
+  drafts answers in parallel; a local-only cheap_llm judge synthesizes the 5-field
+  schema. The `subs` preset never enters PAYG unless `--allow-payg-fallback` is
+  explicit. Default known API cost is **$0**.
 - **`fusion --openrouter`** — the hosted `openrouter/fusion` model where every panelist
   searches the live web before answering. Use when the answer needs FRESH sources
   (current APIs, recent CVEs, "2026 state of X"). PAYG, ~½ a frontier call. Default
@@ -68,7 +68,8 @@ fusion --openrouter "<Q>"               # web-grounded (OpenRouter)
 
 Panel **lane-1** (subscription workers, $0) routes through the codex-worker-router
 (Claude ecosystem). Non-Claude CLIs without that router:
-- automatically fall back to **lane-2** (PAYG HTTP direct, universal), **or**
+- degrade without spending by default, **or**
+- pass `--allow-payg-fallback` to authorize **lane-2** and T2 judge fallback, **or**
 - set `FUSION_ROUTER=/path/to/your/dispatch` to wire lane-1 to your own dispatch, **or**
 - set `FUSION_ROUTER=` (empty) to disable lane-1 entirely.
 
@@ -84,9 +85,9 @@ Lane-1 defaults to the `balanced` profile. Select another with
 | CLI | `fusion` command | lane-1 ($0 subs) | lane-2 (PAYG) |
 |-----|------------------|------------------|---------------|
 | Claude Code | ✓ | ✓ (codex-worker-router) | ✓ |
-| Codex | ✓ | fallback → lane-2 (or set `FUSION_ROUTER`) | ✓ |
-| Antigravity | ✓ | fallback → lane-2 | ✓ |
-| OpenCode | ✓ | fallback → lane-2 | ✓ |
+| Codex | ✓ | ✓ through the shared router | explicit only |
+| Antigravity | ✓ | ✓ through the shared router | explicit only |
+| OpenCode | ✓ | ✓ through the shared router | explicit only |
 
 ## Entry points
 
@@ -105,12 +106,13 @@ fusion --subs-profile coding "<Q>"            # code specialists, subscriptions 
 fusion --subs-profile reasoning --panel-timeout 480 "<Q>"  # frontier subscription hands
 fusion --subs-profile fast "<Q>"              # bounded high-volume validation
 fusion --subs-profile specialists "<Q>"       # Kimi/GLM/MiMo/Grok diversity
+fusion --allow-payg-fallback "<Q>"            # authorize PAYG only after subs/local failure
 fusion --preset mixed "<Q>"                   # always run subs + default PAYG panel
 fusion --preset cheap "<Q>"                   # low-cost direct-provider panel
 fusion --preset intelligence "<Q>"            # frontier-accessible (medium-high complexity)
 fusion --preset ultra --current-model "$MODEL" "<Q>"  # full frontier (high-stakes only)
-fusion --preset ultra --cloud-judge --cloud-model deepseek/deepseek-v4-pro "<Q>"
-fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
+fusion --preset ultra "<Q>"                  # strong v4-pro cloud judge is automatic
+fusion --allow-payg-fallback --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --panel "anthropic/claude-opus-latest,openai/gpt-latest" "<Q>"
 fusion --openrouter --json "<Q>"              # raw OpenRouter Chat Completion JSON
@@ -143,10 +145,11 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
   delegate / cli), with `_boundary` and `_version` as small shared contract modules.
   `FuseOptions` is a parameter object (keeps `fuse()` arity ≤ 5).
 - Module/function names don't collide (`run_panel`, `run_judge` — not `panel.panel`).
-- The judge is local-first with `deepseek/deepseek-v4-flash` pinned as its T2
-  fallback — never a frontier panel seat. For a high-stakes synthesis, use
-  `--cloud-judge --cloud-model deepseek/deepseek-v4-pro`; the model is explicit
-  so Fusion never adds spend silently based on the preset.
+- The `subs` judge is local-only by default. `deepseek/deepseek-v4-flash` is the
+  pinned T2 fallback only after `--allow-payg-fallback`. Frontier presets scale the
+  judge with the panel: `ultra`/`intelligence` default to the strong cloud judge
+  `deepseek/deepseek-v4-pro` (cloud-only, metered like their seats). Any preset
+  accepts explicit `--cloud-judge`/`--cloud-model` overrides.
 - **Secret scrub at every third-party boundary**: the judge inherits it from cheap_llm
   (`scrub_secrets` via `cheap_complete`); the panel scrubs the task itself before
   fanning out to lane-1/lane-2 workers. Local and hosted paths fail closed before
@@ -163,14 +166,15 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 - **Bounded HTTP responses**: panel and hosted provider bodies are capped at 4 MiB before
   decoding, preventing malformed endpoints from causing unbounded in-memory reads.
 - **Judge preflight before panel spend**: `fuse()` gates on the cheap_llm contract
-  (import + `require(>=1.1.1)`) BEFORE fanning out the panel, so a missing/drifted
+  (import + `require(>=1.4.0)`) BEFORE fanning out the panel, so a missing/drifted
   judge transport fails with an actionable error instead of after PAYG spend.
   `run_judge` also degrades gracefully when the judge transport raises after the
   panel completes, preserving `panel_evidence` and the CLI's structured exit-2 envelope.
 - **Router exit-status validation**: lane-1 accepts stdout only from a zero-exit router;
   partial stdout from a failed process is discarded rather than judged as evidence.
-- **Final quorum**: `min_workers` is both the subscription-fallback threshold and the
-  minimum successful-output count before judge synthesis. Set `--min-workers 1`
+- **Final quorum**: `min_workers` is the minimum successful-output count before
+  judge synthesis and, only with `--allow-payg-fallback`, the subscription fallback
+  threshold. Set `--min-workers 1`
   explicitly only when a single-seat result is intentional.
 - **Judge injection boundary**: bounded panel answers are serialized as untrusted JSON
   in the judge user message, never concatenated into the judge system policy.
@@ -200,7 +204,7 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
   `claude-fable` from lane 1 and exposes it only through the explicit PAYG
   `ultra` preset. The Antigravity Claude seats remain manual because the newer
   direct-Claude seats dominate them.
-- **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro` (first-party
+- **Panel lane 2 (explicit PAYG fallback/presets)**: `deepseek-v4-pro` (first-party
   `api.deepseek.com` since 2026-07-17 — same weights, no OpenRouter markup),
   `qwen3.7-max` (ZenMux, lower verified listing price).
 - **Mixed preset**: all configured subscription workers plus the default PAYG panel.
@@ -212,8 +216,10 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 - **Ultra preset**: `claude-fable-5`, `gpt-5.6-sol-pro`, `x-ai/grok-4.5`.
   Opus 4.8 was removed because Fable 5 dominates it within Anthropic; the
   weaker Gemini Pro slot was also removed.
-- **Judge**: local-first cheap_llm cascade with `deepseek/deepseek-v4-flash`
-  (1M ctx) pinned as T2 fallback; explicit `--cloud-judge` skips T1.
+- **Judge**: local-only for default `subs`; `--allow-payg-fallback` enables its pinned
+  `deepseek/deepseek-v4-flash` T2. The explicitly metered `intelligence`/`ultra`
+  presets default to the cloud-only `deepseek/deepseek-v4-pro` judge; on other
+  presets, explicit `--cloud-judge` skips T1.
 - **Current-model exclusion**: pass `--current-model`, or set `FUSION_CURRENT_MODEL`,
   `CONTROLLER_MODEL`, or the CLI-specific model env. Claude sessions fall back
   to `~/.claude/settings.json`; Codex sessions fall back to the root `model` in

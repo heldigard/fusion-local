@@ -4,6 +4,30 @@ All notable changes to fusion-local are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] - 2026-07-22
+
+### Added
+- `--allow-payg-fallback` and `FuseOptions.allow_payg_fallback` make PAYG
+  escalation from the default subscription preset invocation-scoped and
+  auditable.
+
+### Changed
+- The default `subs` preset no longer enters the lane-2 panel or T2 judge after
+  a quorum/local failure unless that invocation opts in. Explicit metered
+  presets continue to authorize their own panel and judge routes.
+- Judge scales with the panel preset: `ultra`/`intelligence` now default to the
+  strong cloud judge `deepseek/deepseek-v4-pro` (cloud-only, `prefer_local=False`),
+  since a 4B local judge cannot faithfully synthesize frontier panel output.
+  Cheaper presets keep the local-first `deepseek/deepseek-v4-flash` judge.
+  `FuseOptions.cloud_model`/`judge_prefer_local` now default to `None` (= scale
+  by preset). Explicit option values override inference; `--cloud-judge` forces
+  cloud-only on local-first presets and `--cloud-model` pins a different T2.
+- Default `judge_timeout` raised 30s -> 45s (`FuseOptions`, `--judge-timeout`,
+  `run_judge`). The budget now covers a cold T1 local load (~25s,
+  `cheap_llm` `LOCAL_COLD_TIMEOUT`) plus a full T2 cloud attempt (~18s); the
+  prior 30s starved T2 after a cold local miss and failed the judge even when
+  the panel had succeeded.
+
 ## [1.4.0] - 2026-07-20
 
 ### Changed

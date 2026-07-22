@@ -26,15 +26,6 @@ DEEPSEEK_KEY_ENV = "DEEPSEEK_API_KEY"
 ZENMUX_URL = "https://zenmux.ai/api/v1/chat/completions"
 ZENMUX_KEY_ENV = "ZENMUX_API_KEY"
 
-# Alibaba Cloud Model Studio — Qwen Coding Plan (Token Plan Singapore). First-party
-# subscription endpoint; cheaper than ZenMux for the same weights. The router
-# (``FUSION_ROUTER``/cli-orchestration) launches the ``qwenc`` Claude Code wrapper
-# as a lane-1 seat; this constant is reserved for future first-party direct calls.
-QWEN_ALIYUN_URL = (
-    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
-)
-QWEN_API_KEY_ENV = "QWEN_API_KEY"
-
 HTTP_REFERER = "https://github.com/heldigard/fusion-local"
 HTTP_TITLE = "fusion-local"
 
@@ -132,8 +123,17 @@ SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
     "codex-deep": ("gpt-5.6-sol", "openai/gpt-5.6-sol"),
     "claude-sonnet": ("claude-sonnet-5", "anthropic/claude-sonnet-5"),
     "claude-opus": ("claude-opus-4.8", "anthropic/claude-opus-4.8"),
-    "agy36-flash": ("gemini-3.6-flash", "google/gemini-3.6-flash", "Gemini 3.6 Flash (High)"),
-    "agy35-flash": ("gemini-3.6-flash", "google/gemini-3.6-flash", "gemini-3.5-flash", "Gemini 3.5 Flash (Medium)"),
+    "agy36-flash": (
+        "gemini-3.6-flash",
+        "google/gemini-3.6-flash",
+        "Gemini 3.6 Flash (High)",
+    ),
+    "agy35-flash": (
+        "gemini-3.6-flash",
+        "google/gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "Gemini 3.5 Flash (Medium)",
+    ),
     # These mappings follow the exact inventory reported by ``agy models``.
     "agy3-pro": (
         "gemini-3.1-pro",

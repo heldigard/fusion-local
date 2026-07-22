@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import urllib.error
 from email.message import Message
+from typing import Any
 from unittest.mock import patch
 
 from _fusion_harness import check
@@ -38,7 +39,7 @@ def test_panel_payg_uses_lane2_only() -> None:
     )
 
 
-def test_panel_subs_falls_back_to_payg() -> None:
+def test_panel_subs_falls_back_to_payg_only_with_opt_in() -> None:
     def fake_cworker(mode, _task, _timeout):
         ok = mode == "codex-spark"
         return {
@@ -62,7 +63,14 @@ def test_panel_subs_falls_back_to_payg() -> None:
         patch.object(panel_mod, "_http_worker", fake_http),
     ):
         panel_mod.run_panel("task", preset="subs", min_workers=2)
-    check("subs fallback ran lane2", len(http_called) == 2, str(http_called))
+        check("subs default blocks lane2 fallback", http_called == [], str(http_called))
+        panel_mod.run_panel(
+            "task",
+            preset="subs",
+            min_workers=2,
+            allow_payg_fallback=True,
+        )
+    check("subs opt-in runs lane2 fallback", len(http_called) == 2, str(http_called))
 
 
 def test_panel_subs_includes_all_documented_subscription_families() -> None:
@@ -327,6 +335,7 @@ def test_panel_mixed_always_runs_both_lanes() -> None:
 
 def test_panel_invalid_inputs_block_dispatch() -> None:
     calls: list[str] = []
+    invalid_bool: Any = 1
 
     def recorder(*_args, **_kwargs):
         calls.append("dispatch")
@@ -339,6 +348,10 @@ def test_panel_invalid_inputs_block_dispatch() -> None:
         ("bool timeout", lambda: panel_mod.run_panel("task", timeout=True)),
         ("zero min workers", lambda: panel_mod.run_panel("task", min_workers=0)),
         ("blank model", lambda: panel_mod.run_panel("task", current_model=" ")),
+        (
+            "non-boolean PAYG fallback",
+            lambda: panel_mod.run_panel("task", allow_payg_fallback=invalid_bool),
+        ),
     ]
     with patch.object(panel_mod, "_run_lane", recorder):
         for name, invoke in cases:
@@ -538,14 +551,22 @@ def test_panel_subs_env_empty_disables_lane1() -> None:
         patch.object(panel_mod, "_cworker_worker", fake_cworker),
         patch.object(panel_mod, "_http_worker", fake_http),
     ):
-        panel_mod.run_panel("task", preset="subs", min_workers=2)
+        panel_mod.run_panel(
+            "task",
+            preset="subs",
+            min_workers=2,
+            allow_payg_fallback=True,
+        )
     check("empty override skips lane-1", cworker_calls == [], str(cworker_calls))
-    check("empty override falls back to lane-2", len(http_calls) == 2, str(http_calls))
+    check("empty override uses explicitly authorized lane-2", len(http_calls) == 2, str(http_calls))
 
 
 TESTS = [
     ("test_panel_payg_uses_lane2_only", test_panel_payg_uses_lane2_only),
-    ("test_panel_subs_falls_back_to_payg", test_panel_subs_falls_back_to_payg),
+    (
+        "test_panel_subs_falls_back_to_payg_only_with_opt_in",
+        test_panel_subs_falls_back_to_payg_only_with_opt_in,
+    ),
     (
         "test_panel_subs_includes_all_documented_subscription_families",
         test_panel_subs_includes_all_documented_subscription_families,

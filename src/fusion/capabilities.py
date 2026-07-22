@@ -87,8 +87,14 @@ def _fuse_capability() -> dict[str, Any]:
             "timeout_seconds": "positive integer",
             "min_workers": "positive integer",
             "subs_profile": list(SUBS_PROFILES),
-            "cloud_model": "pinned T2 judge fallback model",
+            "cloud_model": (
+                "pinned T2 judge model; defaults scale by preset (strong cloud "
+                "judge for ultra/intelligence, flash otherwise)"
+            ),
             "cloud_judge": "boolean; skip local T1 judge when true",
+            "allow_payg_fallback": (
+                "boolean; authorize PAYG panel/judge fallback for the subscription preset"
+            ),
         },
         output_contracts={"default": "fusion-readable-v1", "json": "fusion-envelope-v1"},
         default_output_format="text",
@@ -185,12 +191,12 @@ def _cap(name: str, purpose: str, **overrides: Any) -> dict[str, Any]:
 def _preset_details() -> dict[str, dict[str, Any]]:
     details: dict[str, dict[str, Any]] = {
         "subs": {
-            "lanes": ["subscription", "payg-fallback"],
+            "lanes": ["subscription"],
             "nominal_seats": len(PANEL_SUBS),
             "profile": SUBS_PROFILE_DEFAULT,
             "profiles": SUBS_PROFILES,
             "blocked_credit_modes": sorted(CREDIT_ONLY_WORKERS),
-            "fallback": "default PAYG only when successful subscription seats are below quorum",
+            "fallback": "PAYG only with explicit --allow-payg-fallback and failed quorum",
         },
         "mixed": {
             "lanes": ["subscription", "payg"],
@@ -217,7 +223,11 @@ def _health_payload() -> dict[str, Any]:
         "panel_subs_env": PANEL_SUBS_ENV,
         "panel_subs_profile_env": PANEL_SUBS_PROFILE_ENV,
         "router_protocol": "fusion-panel-v1",
-        "judge_policy": "local-first by default; --cloud-judge selects pinned T2 directly",
+        "judge_policy": (
+            "subs is local-only by default; --allow-payg-fallback permits T2 fallback; "
+            "intelligence/ultra use the strong cloud judge by default; "
+            "--cloud-judge selects pinned T2 directly on other presets"
+        ),
         "max_external_response_bytes": MAX_EXTERNAL_RESPONSE_BYTES,
         "quorum": "final successful output count must satisfy min_workers before judging",
         "network_probed": False,

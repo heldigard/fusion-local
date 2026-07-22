@@ -105,6 +105,35 @@ def test_judge_cloud_only_policy_reaches_cheap_llm() -> None:
         result = judge_mod.run_judge("task", [{"source": "x", "output": "y"}], prefer_local=False)
     check("cloud-only judge remains valid", result["judge_valid"] is True, str(result))
     check("cloud-only judge skips cheap_llm T1", seen.get("prefer_local") is False, str(seen))
+    check("cloud-only judge explicitly allows T2", seen.get("allow_cloud") is True, str(seen))
+
+
+def test_judge_local_policy_requires_explicit_cloud_fallback() -> None:
+    policies: list[bool] = []
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+
+    def fake(system, prompt, **kwargs):
+        policies.append(kwargs["allow_cloud"])
+        return _fake_cheap_complete(env)(system, prompt, **kwargs)
+
+    with patch("cheap_llm.cheap_complete", fake):
+        default = judge_mod.run_judge("task", [{"source": "x", "output": "y"}])
+        opted_in = judge_mod.run_judge(
+            "task",
+            [{"source": "x", "output": "y"}],
+            allow_cloud_fallback=True,
+        )
+    check(
+        "local-only and opt-in judges remain valid",
+        default["judge_valid"] and opted_in["judge_valid"],
+    )
+    check("local judge cloud fallback is explicit", policies == [False, True], str(policies))
 
 
 def test_judge_bounds_each_untrusted_panel_record() -> None:
@@ -350,6 +379,7 @@ def test_judge_validates_inputs_before_transport() -> None:
         lambda: judge_mod.run_judge("task", [], timeout=True),
         lambda: judge_mod.run_judge("task", [], cloud_model=" "),
         lambda: judge_mod.run_judge("task", [], prefer_local=invalid_bool),
+        lambda: judge_mod.run_judge("task", [], allow_cloud_fallback=invalid_bool),
     ]
     with patch("cheap_llm.cheap_complete", recorder):
         for invoke in cases:
@@ -397,6 +427,10 @@ TESTS = [
     (
         "test_judge_cloud_only_policy_reaches_cheap_llm",
         test_judge_cloud_only_policy_reaches_cheap_llm,
+    ),
+    (
+        "test_judge_local_policy_requires_explicit_cloud_fallback",
+        test_judge_local_policy_requires_explicit_cloud_fallback,
     ),
     (
         "test_judge_bounds_each_untrusted_panel_record",

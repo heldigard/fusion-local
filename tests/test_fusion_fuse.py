@@ -47,6 +47,192 @@ def test_fuse_integrates() -> None:
     check("fuse latency set", isinstance(out["total_latency"], (int, float)))
 
 
+def test_fuse_derives_judge_spend_policy_from_explicit_authority() -> None:
+    cloud_policies: list[bool] = []
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+
+    def fake_judge(system, prompt, **kwargs):
+        cloud_policies.append(kwargs["allow_cloud"])
+        return _fake_cheap_complete(env)(system, prompt, **kwargs)
+
+    with (
+        patch.object(
+            panel_mod,
+            "_cworker_worker",
+            lambda m, _t, _to: {
+                "source": m,
+                "lane": "subscription",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", fake_judge),
+    ):
+        fuse("task", opts=FuseOptions(preset="subs", min_workers=1))
+        fuse(
+            "task",
+            opts=FuseOptions(
+                preset="subs",
+                min_workers=1,
+                allow_payg_fallback=True,
+            ),
+        )
+        fuse("task", opts=FuseOptions(preset="cheap", min_workers=1))
+    check(
+        "subscription default blocks cloud while explicit authorities permit it",
+        cloud_policies == [False, True, True],
+        str(cloud_policies),
+    )
+
+
+def test_fuse_scales_judge_with_preset() -> None:
+    judge_kwargs: list[dict[str, Any]] = []
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+
+    def fake_judge(system, prompt, **kwargs):
+        judge_kwargs.append(kwargs)
+        return _fake_cheap_complete(env)(system, prompt, **kwargs)
+
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", fake_judge),
+    ):
+        fuse("task", opts=FuseOptions(preset="ultra", min_workers=1))
+        fuse("task", opts=FuseOptions(preset="intelligence", min_workers=1))
+        fuse("task", opts=FuseOptions(preset="cheap", min_workers=1))
+    models = [kwargs["cloud_model"] for kwargs in judge_kwargs]
+    check(
+        "frontier presets judge with the strong cloud model",
+        models
+        == [
+            judge_mod.STRONG_JUDGE_MODEL,
+            judge_mod.STRONG_JUDGE_MODEL,
+            judge_mod.DEFAULT_JUDGE_MODEL,
+        ],
+        str(models),
+    )
+    prefer_local = [kwargs["prefer_local"] for kwargs in judge_kwargs]
+    check(
+        "frontier presets skip the weak local judge; cheap keeps local-first",
+        prefer_local == [False, False, True],
+        str(prefer_local),
+    )
+
+
+def test_fuse_explicit_judge_options_win_over_preset_scaling() -> None:
+    judge_kwargs: list[dict[str, Any]] = []
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+
+    def fake_judge(system, prompt, **kwargs):
+        judge_kwargs.append(kwargs)
+        return _fake_cheap_complete(env)(system, prompt, **kwargs)
+
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", fake_judge),
+    ):
+        fuse(
+            "task",
+            opts=FuseOptions(
+                preset="ultra",
+                min_workers=1,
+                cloud_model="acme/custom-judge",
+                judge_prefer_local=True,
+            ),
+        )
+    check(
+        "explicit judge options override preset scaling",
+        judge_kwargs[0]["cloud_model"] == "acme/custom-judge"
+        and judge_kwargs[0]["prefer_local"] is True,
+        str(judge_kwargs),
+    )
+
+
+def test_fuse_judge_timeout_default_covers_cold_local_plus_cloud() -> None:
+    judge_kwargs: list[dict[str, Any]] = []
+    env = {
+        "consensus": "C",
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [],
+        "blind_spots": [],
+    }
+
+    def fake_judge(system, prompt, **kwargs):
+        judge_kwargs.append(kwargs)
+        return _fake_cheap_complete(env)(system, prompt, **kwargs)
+
+    with (
+        patch.object(
+            panel_mod,
+            "_http_worker",
+            lambda spec, _t, _to: {
+                "source": spec[0],
+                "lane": "payg",
+                "success": True,
+                "output": "o",
+            },
+        ),
+        patch("cheap_llm.cheap_complete", fake_judge),
+    ):
+        fuse("task", opts=FuseOptions(preset="cheap", min_workers=1))
+    check(
+        "judge timeout default covers cold T1 (~25s) plus T2 (~18s)",
+        judge_kwargs[0]["timeout_total"] >= 43.0,
+        str(judge_kwargs),
+    )
+    check(
+        "CLI --judge-timeout default matches the FuseOptions default",
+        fcli._build_parser().parse_args(["Q?"]).judge_timeout == FuseOptions().judge_timeout,
+    )
+
+
 def test_fuse_reports_custom_subscription_worker_list() -> None:
     with (
         patch.dict("os.environ", {"FUSION_PANEL_SUBS": "kimic,zai"}, clear=True),
@@ -119,6 +305,7 @@ def test_fuse_invalid_inputs_block_preflight() -> None:
         return {"ok": True, "version": "test", "error": None}
 
     invalid_opts: Any = "bad"
+    invalid_bool: Any = 1
     cases = [
         lambda: fuse(""),
         lambda: fuse("task", opts=invalid_opts),
@@ -128,6 +315,8 @@ def test_fuse_invalid_inputs_block_preflight() -> None:
         lambda: fuse("task", opts=FuseOptions(min_workers=0)),
         lambda: fuse("task", opts=FuseOptions(cloud_model=" ")),
         lambda: fuse("task", opts=FuseOptions(current_model=" ")),
+        lambda: fuse("task", opts=FuseOptions(judge_prefer_local=invalid_bool)),
+        lambda: fuse("task", opts=FuseOptions(allow_payg_fallback=invalid_bool)),
     ]
     with patch.object(fcli, "preflight", recorder):
         for invoke in cases:
@@ -349,6 +538,19 @@ def test_fuse_requires_final_panel_quorum() -> None:
 
 TESTS = [
     ("test_fuse_integrates", test_fuse_integrates),
+    (
+        "test_fuse_derives_judge_spend_policy_from_explicit_authority",
+        test_fuse_derives_judge_spend_policy_from_explicit_authority,
+    ),
+    ("test_fuse_scales_judge_with_preset", test_fuse_scales_judge_with_preset),
+    (
+        "test_fuse_explicit_judge_options_win_over_preset_scaling",
+        test_fuse_explicit_judge_options_win_over_preset_scaling,
+    ),
+    (
+        "test_fuse_judge_timeout_default_covers_cold_local_plus_cloud",
+        test_fuse_judge_timeout_default_covers_cold_local_plus_cloud,
+    ),
     (
         "test_fuse_reports_custom_subscription_worker_list",
         test_fuse_reports_custom_subscription_worker_list,

@@ -2,8 +2,8 @@
 
 Lane 1 ($0 subs): a task-specific subscription profile routed through cworker.
 Lane 2 (PAYG, universal cross-CLI): HTTP direct to explicitly bound providers.
-The orchestration runs lane 1, then falls back to lane 2 when fewer than
-``min_workers`` succeed.
+The subscription preset runs lane 1 only unless ``allow_payg_fallback``
+explicitly authorizes lane 2 after quorum failure.
 
 The model catalog (``panel_models``) and current-controller-model detection
 (``panel_current``) live in sibling modules; this module re-exports their
@@ -271,7 +271,10 @@ def _cworker_worker(mode: str, task: str, timeout: int) -> dict[str, Any]:
             "source": mode,
             "lane": "subscription",
             "success": False,
-            "error": "router unavailable (set FUSION_ROUTER or rely on lane-2)",
+            "error": (
+                "router unavailable (set FUSION_ROUTER, choose a PAYG preset, "
+                "or authorize PAYG fallback)"
+            ),
         }
     guarded = WORKER_GUARD + task
     command = _cworker_build_command(mode, timeout)
@@ -470,11 +473,13 @@ def run_panel(
     min_workers: int = 2,
     current_model: str | None = None,
     subs_profile: str | None = None,
+    allow_payg_fallback: bool = False,
 ) -> list[dict[str, Any]]:
     """Run the deliberation panel. Successful outputs first, failures after.
 
     preset:
-      - "subs"        : lane 1 only ($0 subscription). Fallback to lane 2 if < min_workers succeed.
+      - "subs"        : lane 1 only ($0 subscription). Optional lane-2 fallback
+                        requires allow_payg_fallback=True.
       - "payg"        : lane 2 only (universal PAYG HTTP direct).
       - "cheap"       : low-cost provider-bound lane 2 panel.
       - "intelligence": frontier-accessible lane 2 panel (no premium $25-50/M seats).
@@ -488,6 +493,8 @@ def run_panel(
     require_positive_int("min_workers", min_workers)
     require_nonempty_string("current_model", current_model, optional=True)
     require_nonempty_string("subs_profile", subs_profile, optional=True)
+    if not isinstance(allow_payg_fallback, bool):
+        raise ValueError("allow_payg_fallback must be a boolean")
     has_custom_subs = os.environ.get(PANEL_SUBS_ENV) is not None
     resolved_subs_profile = (
         "custom"
@@ -531,7 +538,9 @@ def run_panel(
         all_results.extend(skipped)
         all_results.extend(_run_lane(subs_workers, _cworker_runner, task, timeout))
     ok = [r for r in all_results if r.get("success") and r.get("output")]
-    if preset in PAYG_PRESETS or len(ok) < min_workers:
+    if preset in PAYG_PRESETS or (
+        preset == "subs" and allow_payg_fallback and len(ok) < min_workers
+    ):
         payg_workers, skipped = _without_current_model(
             _payg_panel_for_preset(preset), current_model
         )

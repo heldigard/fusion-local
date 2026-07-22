@@ -29,7 +29,7 @@ from ._boundary import (
 )
 from ._version import __version__
 from .capabilities import capabilities_payload
-from .judge import DEFAULT_JUDGE_MODEL, empty_fields, preflight, run_judge
+from .judge import DEFAULT_JUDGE_MODEL, STRONG_JUDGE_MODEL, empty_fields, preflight, run_judge
 from .panel import (
     PANEL_PRESETS,
     PANEL_SUBS_ENV,
@@ -41,22 +41,36 @@ from .panel import (
     run_panel,
 )
 
+# Presets whose panel seats are frontier models. Their judge scales up too:
+# a local 4B judge cannot faithfully synthesize frontier deliberation, so these
+# presets default to the strong cloud judge (STRONG_JUDGE_MODEL) directly,
+# skipping the local T1 tier. Explicit option values override inference;
+# --cloud-judge forces cloud-only judging on presets that are local-first.
+STRONG_JUDGE_PRESETS: tuple[str, ...] = ("intelligence", "ultra")
+
 
 @dataclass
 class FuseOptions:
     """Tunable knobs for fuse() — a parameter object (keeps fuse() arity ≤ 5)."""
 
     preset: str = "subs"
-    cloud_model: str | None = DEFAULT_JUDGE_MODEL
+    # None = scale by preset (STRONG_JUDGE_MODEL for STRONG_JUDGE_PRESETS,
+    # DEFAULT_JUDGE_MODEL otherwise). An explicit value always wins.
+    cloud_model: str | None = None
     # Reasoning-tier seats (Opus/Kimi/GLM/Grok/Sol) legitimately run 60-120s;
     # the prior 60s default starved them and dropped quorum. Fast seats are
     # capped separately in panel._seat_timeout so flash/haiku still fail fast.
     panel_timeout: int = 120
-    judge_timeout: int = 30
+    # Covers cold T1 local (~25s) + one T2 cloud attempt (~18s); 30s starved
+    # T2 after a cold local miss and failed the judge after a good panel.
+    judge_timeout: int = 45
     min_workers: int = 2
     current_model: str | None = None
-    judge_prefer_local: bool = True
+    # None = scale by preset (cloud-only judge for STRONG_JUDGE_PRESETS,
+    # local-first otherwise). An explicit value (e.g. --cloud-judge) wins.
+    judge_prefer_local: bool | None = None
     subs_profile: str | None = None
+    allow_payg_fallback: bool = False
 
 
 def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
@@ -83,8 +97,18 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     require_positive_int("panel_timeout", o.panel_timeout)
     require_positive_int("judge_timeout", o.judge_timeout)
     require_positive_int("min_workers", o.min_workers)
-    if not isinstance(o.judge_prefer_local, bool):
-        raise ValueError("judge_prefer_local must be a boolean")
+    if o.judge_prefer_local is not None and not isinstance(o.judge_prefer_local, bool):
+        raise ValueError("judge_prefer_local must be a boolean or None")
+    if not isinstance(o.allow_payg_fallback, bool):
+        raise ValueError("allow_payg_fallback must be a boolean")
+    # Per-preset judge scaling: frontier panels default to the strong cloud
+    # judge (cloud-only); cheaper presets keep the local-first flash judge.
+    # Explicit overrides (cloud_model, judge_prefer_local, --cloud-judge) win.
+    strong_judge = o.preset in STRONG_JUDGE_PRESETS
+    judge_model = o.cloud_model or (STRONG_JUDGE_MODEL if strong_judge else DEFAULT_JUDGE_MODEL)
+    judge_prefer_local = (
+        o.judge_prefer_local if o.judge_prefer_local is not None else not strong_judge
+    )
     t0 = time.perf_counter()
     # Judge-transport preflight BEFORE the panel: a missing/drifted cheap_llm
     # must fail before PAYG/subscription spend, not after the panel already ran.
@@ -111,6 +135,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             min_workers=o.min_workers,
             current_model=current_model,
             subs_profile=o.subs_profile,
+            allow_payg_fallback=o.allow_payg_fallback,
         )
     except SecretScrubError:
         return empty_fields(
@@ -129,10 +154,13 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     jd = run_judge(
         task,
         pr,
-        cloud_model=o.cloud_model,
+        cloud_model=judge_model,
         timeout=o.judge_timeout,
         min_outputs=o.min_workers,
-        prefer_local=o.judge_prefer_local,
+        prefer_local=judge_prefer_local,
+        # Selecting a metered preset explicitly authorizes a metered judge
+        # fallback. The default subscription preset requires the opt-in flag.
+        allow_cloud_fallback=o.allow_payg_fallback or o.preset != "subs",
     )
     jd["sources"] = [_source_meta(r) for r in pr]
     jd["total_latency"] = round(time.perf_counter() - t0, 2)
@@ -229,8 +257,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cloud-model",
         type=nonempty_arg,
-        default=DEFAULT_JUDGE_MODEL,
-        help=f"Pinned T2 judge fallback model (default: {DEFAULT_JUDGE_MODEL}).",
+        default=None,
+        help=(
+            "Pinned T2 judge model used only after explicit metered authority "
+            f"(default: {STRONG_JUDGE_MODEL} for ultra/intelligence, "
+            f"{DEFAULT_JUDGE_MODEL} otherwise)."
+        ),
     )
     parser.add_argument(
         "--cloud-judge",
@@ -244,13 +276,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Per-panelist timeout (s); fast-tier seats are internally capped.",
     )
     parser.add_argument(
-        "--judge-timeout", type=positive_int_arg, default=30, help="Judge call timeout (s)."
+        "--judge-timeout",
+        type=positive_int_arg,
+        default=45,
+        help="Judge call timeout (s); default covers cold local + one cloud attempt.",
     )
     parser.add_argument(
         "--min-workers",
         type=positive_int_arg,
         default=2,
-        help="Min successful panelists before skipping PAYG fallback.",
+        help="Required successful panelists before judging.",
+    )
+    parser.add_argument(
+        "--allow-payg-fallback",
+        action="store_true",
+        help=(
+            "Allow the subscription preset to use PAYG panel/judge fallback when "
+            "subscription quorum or the local judge fails."
+        ),
     )
     parser.add_argument(
         "--current-model",
@@ -332,8 +375,9 @@ def main() -> int:
                 judge_timeout=args.judge_timeout,
                 min_workers=args.min_workers,
                 current_model=args.current_model,
-                judge_prefer_local=not args.cloud_judge,
+                judge_prefer_local=False if args.cloud_judge else None,
                 subs_profile=args.subs_profile,
+                allow_payg_fallback=args.allow_payg_fallback,
             ),
         )
     except ValueError as exc:

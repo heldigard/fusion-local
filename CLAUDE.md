@@ -10,9 +10,9 @@ script on `~/.local/bin`).
 
 The **deliberation layer** for the big model. Two modes, distinct wire contracts:
 
-- **fusion (DEFAULT, local)**: panel of subscription workers ($0) + local-first
-  cheap_llm judge (`deepseek-v4-flash` pinned T2 fallback) + `JUDGE_SCHEMA_PROMPT`.
-  Cost ≈ $0–0.04.
+- **fusion (DEFAULT, local)**: panel of subscription workers ($0) + local-only
+  cheap_llm judge + `JUDGE_SCHEMA_PROMPT`. PAYG fallback requires
+  `--allow-payg-fallback`; default known API cost is $0.
 - **fusion --openrouter**: hosted `openrouter/fusion`, every panelist searches the live
   web. PAYG, ~½ a frontier call. Default output is assistant text; `--json` is the raw
   provider Chat Completion, not the local five-field envelope.
@@ -47,10 +47,10 @@ Each module is one cohesive feature. Module/function names don't collide (`run_p
 
 ```
 PANEL LANE 1 ($0 subs, parallel)   explicit balanced/coding/reasoning/fast/specialists profile
-    fallback when < min_workers succeed ↓
+    explicit --allow-payg-fallback when < min_workers succeed ↓
 PANEL LANE 2 (PAYG, HTTP direct)   deepseek-v4-pro (api.deepseek.com) · qwen3.7-max (ZenMux)
     ↓
-JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE_SCHEMA_PROMPT
+JUDGE  cheap_complete(local-only by default; explicit pinned T2 fallback) + JUDGE_SCHEMA_PROMPT
     → 5-field JSON {consensus, contradictions, coverage_gaps, unique_insights, blind_spots}
 ```
 
@@ -60,7 +60,7 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
 - `fusion` shell command = installed alias → `fusion-local`.
 - **lane-1** (subs) uses `FUSION_ROUTER` (default `~/.claude/scripts/codex-worker-router.py`,
   Claude ecosystem). Non-Claude CLIs: set `FUSION_ROUTER=/your/dispatch`, or `FUSION_ROUTER=`
-  to disable (panel falls back to lane-2 PAYG, universal).
+  to disable. Disabled or failed lane 1 degrades without PAYG unless the flag/preset is explicit.
 - **lane-1 profile**: `--subs-profile` / `FUSION_SUBS_PROFILE` selects
   `balanced`, `coding`, `reasoning`, `fast`, or `specialists`.
 - **lane-1 worker modes**: `FUSION_PANEL_SUBS` (`a,b` = custom; empty = disable)
@@ -89,6 +89,9 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
   exits zero; partial stdout from failed dispatch is never promoted to panel evidence.
 - **Router protocol**: lane-1 uses `fusion-panel-v1` (answer-only stdout, no tools,
   no router-level cloud fallback). Fusion exclusively owns PAYG fallback.
+- **Explicit spend authority**: `subs` is subscription-panel + local-judge only by
+  default. `--allow-payg-fallback`, a PAYG preset, `mixed`, or `--cloud-judge`
+  is required before the corresponding metered lane can run.
 - **Final quorum**: fewer than `min_workers` successful outputs degrades before judge
   transport and preserves bounded panel evidence.
 - **Judge isolation**: panel text is bounded and serialized as untrusted user data,
@@ -128,11 +131,12 @@ JUDGE  cheap_complete(local-first; pinned T2=deepseek/deepseek-v4-flash) + JUDGE
 ```
 fusion "<Q>"                                  # local panel + judge (default)
 fusion --json "<Q>"                           # full 5-field envelope as JSON
+fusion --allow-payg-fallback "<Q>"            # authorize PAYG after subs/local failure
 fusion --preset mixed "<Q>"                   # always subs + default PAYG panel
 fusion --preset cheap "<Q>"                   # low-cost direct-provider panel
 fusion --preset ultra --current-model "$MODEL" "<Q>"
-fusion --preset ultra --cloud-judge --cloud-model deepseek/deepseek-v4-pro "<Q>"
-fusion --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
+fusion --preset ultra "<Q>"                  # strong v4-pro cloud judge is automatic
+fusion --allow-payg-fallback --cloud-model "deepseek/deepseek-v4-flash" "<Q>"
 fusion --openrouter "<Q>"                     # OpenRouter hosted (web-grounded)
 fusion --openrouter --json "<Q>"              # raw OpenRouter Chat Completion JSON
 fusion --version
@@ -184,8 +188,12 @@ fusion --version
   `z-ai/glm-5.2` (ZenMux). Three strong, nonredundant families.
 - **Ultra preset**: `claude-fable-5`, `gpt-5.6-sol-pro`, `x-ai/grok-4.5`.
   Dominated Opus/Gemini siblings are intentionally absent.
-- **Judge**: local-first; `DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"`
-  pins T2. `--cloud-judge` skips T1; `--cloud-model` selects that T2 model.
+- **Judge**: scales with the preset. `ultra`/`intelligence` default to the
+  strong cloud judge `deepseek/deepseek-v4-pro` (cloud-only); cheaper presets
+  keep the local-first judge with `DEFAULT_JUDGE_MODEL` pinning T2 only after
+  explicit authorization. `--cloud-judge` skips T1; `--cloud-model` overrides
+  the pinned T2 for any preset. Default judge timeout is 45s (cold local load
+  ~25s + one cloud attempt ~18s).
 - **Current-model exclusion**: `--current-model` or env (`FUSION_CURRENT_MODEL`,
   `CONTROLLER_MODEL`, CLI-specific `*_MODEL`) skips matching panelists and
   reports them in `sources[]`. Claude/Codex sessions also read their canonical

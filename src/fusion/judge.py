@@ -18,14 +18,19 @@ from ._boundary import public_error, require_nonempty_string, require_positive_i
 # (idempotent side-effect in fusion.config) so the lazy `import cheap_llm` below resolves.
 from .config import CHEAP_LLM_HOME  # noqa: F401
 
-DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"  # BYOK $0, 1M ctx
+DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"  # low-cost pinned T2, 1M ctx
+# Frontier panels (intelligence/ultra) deserve a judge at least as strong as
+# their seats: a 4B local model cannot faithfully synthesize frontier output.
+# v4-pro is the strongest DeepSeek route supported by cheap_llm (direct,
+# optional DeepInfra, then OpenRouter/ZenMux) and is bounded to metered presets.
+STRONG_JUDGE_MODEL = "deepseek/deepseek-v4-pro"
 MAX_PANEL_OUTPUT_CHARS = 64_000
 MAX_JUDGE_DATA_CHARS = 256_000
 
-# Contract floor: this consumer needs ``cloud_model`` plus schema validation that
-# accepts empty JSON arrays (cheap_llm SemVer >= 1.1.1). Public so capabilities
-# and preflight consumers reference ONE source of truth.
-CHEAP_LLM_MIN_VERSION = "1.1.1"
+# Contract floor: this consumer needs invocation-scoped ``allow_cloud`` in
+# addition to pinned cloud models and empty-array schema validation. Public so
+# capabilities and preflight consumers reference ONE source of truth.
+CHEAP_LLM_MIN_VERSION = "1.4.0"
 
 FUSION_FIELDS: tuple[str, ...] = (
     "consensus",
@@ -93,9 +98,13 @@ def run_judge(
     task: str,
     panel_results: list[dict[str, Any]],
     cloud_model: str | None = DEFAULT_JUDGE_MODEL,
-    timeout: int = 30,
+    # Budget covers a cold T1 local load (~25s, cheap_llm LOCAL_COLD_TIMEOUT)
+    # plus a full T2 cloud attempt (~18s); the prior 30s starved T2 after a
+    # cold T1 miss and failed the judge even when the panel succeeded.
+    timeout: int = 45,
     min_outputs: int = 1,
     prefer_local: bool = True,
+    allow_cloud_fallback: bool = False,
 ) -> dict[str, Any]:
     """Judge the panel into the 5-field schema via the cheap_llm cascade.
 
@@ -113,6 +122,8 @@ def run_judge(
     require_positive_int("min_outputs", min_outputs)
     if not isinstance(prefer_local, bool):
         raise ValueError("prefer_local must be a boolean")
+    if not isinstance(allow_cloud_fallback, bool):
+        raise ValueError("allow_cloud_fallback must be a boolean")
 
     output_count = sum(
         isinstance(result.get("output"), str) and bool(result["output"].strip())
@@ -165,6 +176,9 @@ def run_judge(
             prefer_local=prefer_local,
             require_json=True,
             max_output_tokens=2048,  # 5-field deliberation can exceed the 1024 default
+            # Cloud-only mode is already explicit. A local-first judge may use
+            # T2 only when the owning Fusion invocation authorized fallback.
+            allow_cloud=not prefer_local or allow_cloud_fallback,
         )
     except Exception as exc:  # noqa: BLE001 — preserve the already-gathered panel signal
         return empty_fields(

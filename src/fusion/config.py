@@ -29,11 +29,11 @@ except ImportError:
 # shim delegates to the CLI-agnostic cli-orchestration/cworker package. Codex,
 # Antigravity, OpenCode, Kimi, and Qwen controllers should normally keep this
 # default whenever the shared harness is installed. Set FUSION_ROUTER="" only
-# for an intentionally PAYG-only environment, or provide another compatible
-# fusion-panel-v1 shim explicitly.
+# to disable lane 1, then choose an explicit PAYG preset/flag if desired, or
+# provide another compatible fusion-panel-v1 shim explicitly.
 _env_router = os.environ.get("FUSION_ROUTER")
 DEFAULT_ROUTER = Path.home() / ".claude" / "scripts" / "codex-worker-router.py"
-# unset → shared harness default; "" → disable lane-1 (panel falls back to lane-2);
+# unset → shared harness default; "" → disable lane-1 (no implicit lane-2);
 # "/path" → custom dispatch shim.
 ROUTER: Path | None = (
     None if _env_router == "" else Path(_env_router) if _env_router else DEFAULT_ROUTER
