@@ -172,11 +172,12 @@ fusion --version
 - **Panel lane 1 ($0 subs)** is profile-driven:
   - `balanced`: `claude-sonnet`, `kimic`, `zai`.
   - `coding`: `codex-spark`, `claude-sonnet`, `kimic`, `grok`.
-  - `reasoning`: `claude-opus`, `codex-frontier`, `agy35-flash`, `kimic`, `zai`.
-  - `fast`: `codex-quick`, `agy35-flash`, `zai`.
-  - `specialists`: `kimic`, `zai`, `mimo`, `grok`.
-  `grok` is the Grok Build coding seat; `mini` (M2.7) is excluded from named
-  profiles because M3 supersedes it, but remains available by explicit override.
+  - `reasoning`: `claude-opus`, `codex-frontier`, `agy36-flash`, `kimic`, `zai`.
+  - `fast`: `codex-quick`, `agy36-flash`, `zai`.
+  - `specialists`: `kimic`, `zai`, `mimo`, `grok`, `qwenc`.
+  `grok` is the Grok Build coding seat; `mini` runs MiniMax M3 through
+  cli-orchestration's cworker (M2.7 has no exposed cworker mode) and is excluded
+  from named profiles, remaining available only by explicit override.
   `claude-fable` is credit-only and rejected from lane 1; use `ultra` so its
   provider and metered cost remain explicit.
 - **Panel lane 2 (PAYG fallback)**: `deepseek-v4-pro` (first-party

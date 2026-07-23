@@ -51,9 +51,10 @@ SUBS_PROFILES: dict[str, tuple[str, ...]] = {
     "reasoning": ("claude-opus", "codex-frontier", "agy36-flash", "kimic", "zai"),
     # High-volume triage where latency and subscription conservation dominate.
     "fast": ("codex-quick", "agy36-flash", "zai"),
-    # Specialist diversity.  MiniMax M2.7 is intentionally absent because M3
-    # supersedes it; the legacy ``mini`` seat remains available only by an
-    # explicit FUSION_PANEL_SUBS override.
+    # Specialist diversity. The ``mini`` seat (MiniMax M3 in cli-orchestration;
+    # M2.7 has no exposed cworker mode) is intentionally absent from named
+    # profiles and remains available only by an explicit FUSION_PANEL_SUBS
+    # override.
     "specialists": ("kimic", "zai", "mimo", "grok", "qwenc"),
 }
 SUBS_PROFILE_NAMES: tuple[str, ...] = tuple(SUBS_PROFILES)
@@ -162,7 +163,11 @@ SUBS_WORKER_MODELS: dict[str, tuple[str, ...]] = {
         "moonshotai/kimi-k2.7-code",
     ),
     "zai": ("glm-5.2", "z-ai/glm-5.2"),
-    "mini": ("minimax-m2.7", "minimax/minimax-m2.7"),
+    # ``mini`` runs MiniMax M3 through cli-orchestration's cworker (M2.7 has no
+    # exposed cworker mode). Kept in sync with cli-orchestration's
+    # WORKER_MODEL_PROFILE["mini"] so current-model exclusion matches the model
+    # the seat actually runs.
+    "mini": ("minimax-m3", "minimax/minimax-m3"),
     "mimo": ("mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro"),
     # Alibaba Qwen Coding Plan (Token Plan Singapore) — top preview qwen3.8-max-preview
     # plus stable qwen3.7-max and qwen3.7-plus spellings. Excluded when the controller
