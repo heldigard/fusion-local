@@ -4,7 +4,16 @@ All notable changes to fusion-local are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.1] - 2026-07-24
+
+### Added
+- `py.typed` marker shipped in the wheel so downstream pyright/mypy consumers
+  (cli-orchestration) use fusion's inline types instead of inferred `Unknown`s.
+- Python 3.14 trove classifier (the CI compatibility matrix already tested it).
+- `tests/_cheap_llm_stub.py`: minimal `cheap_llm` stand-in (`require`,
+  `scrub_secrets`, `cheap_complete`, `__version__`) that `conftest.py` installs
+  into `sys.modules` only when no real checkout resolves, so the mocked
+  contract suite runs hermetically on CI runners.
 
 ### Changed
 - `run_panel` default `timeout` aligned to 120s (was 60). The v1.4.0 tier-aware
@@ -16,6 +25,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to
   `panel.invocation_subs_profile` instead of being duplicated in both.
 
 ### Fixed
+- CI quality job: `pytest-cov` added to the locked `test` extra. The coverage
+  gate (`pytest --cov=fusion --cov-fail-under=85`) failed on clean runners
+  with `unrecognized arguments: --cov` because only `pytest` + `ruff` were
+  locked; the local venv had masked the gap via a manual install.
+- CI compatibility jobs: all failed at collection with
+  `ModuleNotFoundError: No module named 'cheap_llm'` — tests patch
+  `cheap_llm.*` by module path, which requires the module importable even when
+  fully mocked, and no `~/cheap-llm` checkout exists on a runner. Resolved by
+  the conftest stub fallback above (the real package still wins locally).
+- `fuse()` degraded early returns (judge preflight failure, panel scrub
+  failure) now emit `total_known_cost: 0.0`, matching the always-present field
+  contract documented in `capabilities.FUSE_ENVELOPE_FIELDS`.
 - README model-routing roster synced with the catalog: `reasoning`/`fast`
   profiles list Gemini 3.6 Flash (`agy36-flash`, renamed in 1.4.x docs drift)
   and `specialists` includes the Qwen Coding Plan (`qwenc`) seat.

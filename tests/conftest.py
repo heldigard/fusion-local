@@ -23,3 +23,14 @@ for _candidate in (
         if str(_candidate) not in sys.path:
             sys.path.insert(0, str(_candidate))
         break
+
+# Hermetic fallback: without a real cheap-llm checkout (CI runners) the module
+# is unimportable and every patch("cheap_llm...") fails at collection. Install
+# the minimal stub so contract tests run everywhere; the real package always
+# wins when importable.
+try:
+    import cheap_llm  # noqa: F401
+except ModuleNotFoundError:
+    from _cheap_llm_stub import install_stub
+
+    install_stub()

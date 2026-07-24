@@ -114,6 +114,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             **({"subs_profile": resolved_subs_profile} if o.preset in ("subs", "mixed") else {}),
             panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
+            total_known_cost=0.0,
         )
     current_model = detect_current_model(o.current_model)
     try:
@@ -138,6 +139,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
             **({"subs_profile": resolved_subs_profile} if o.preset in ("subs", "mixed") else {}),
             panel_quorum={"required": o.min_workers, "successful": 0, "met": False},
             total_latency=round(time.perf_counter() - t0, 2),
+            total_known_cost=0.0,
         )
     successful = sum(bool(r.get("success") and r.get("output")) for r in pr)
     jd = run_judge(

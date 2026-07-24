@@ -477,6 +477,13 @@ def test_fuse_preflight_blocks_panel_spend() -> None:
     check("preflight fail → actionable error", "cheap_llm" in out["error"], str(out))
     check("preflight fail → empty sources", out["sources"] == [])
     check("preflight fail → preset echoed", out["preset"] == "subs")
+    # total_known_cost is an always-present contract field (capabilities comment):
+    # the degraded early return must emit it exactly like the judged path does.
+    check(
+        "preflight fail → total_known_cost emitted",
+        out.get("total_known_cost") == 0.0,
+        str(out),
+    )
 
 
 def test_fuse_degrades_before_dispatch_when_scrub_fails() -> None:
@@ -494,6 +501,11 @@ def test_fuse_degrades_before_dispatch_when_scrub_fails() -> None:
     check("scrub failure makes zero provider calls", calls == [], str(calls))
     check("scrub failure is degraded", out["status"] == "degraded", str(out))
     check("scrub failure hides exception detail", "SECRET_MARKER" not in out["error"], out["error"])
+    check(
+        "scrub failure → total_known_cost emitted",
+        out.get("total_known_cost") == 0.0,
+        str(out),
+    )
 
 
 def test_fuse_requires_final_panel_quorum() -> None:
