@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from dataclasses import dataclass
@@ -32,12 +31,11 @@ from .capabilities import capabilities_payload
 from .judge import DEFAULT_JUDGE_MODEL, STRONG_JUDGE_MODEL, empty_fields, preflight, run_judge
 from .panel import (
     PANEL_PRESETS,
-    PANEL_SUBS_ENV,
     SUBS_PROFILE_DEFAULT,
     SUBS_PROFILE_NAMES,
     detect_current_model,
+    invocation_subs_profile,
     panel_seat_status,
-    resolve_subs_profile,
     run_panel,
 )
 
@@ -84,16 +82,7 @@ def fuse(task: str, opts: FuseOptions | None = None) -> dict[str, Any]:
     require_nonempty_string("cloud_model", o.cloud_model, optional=True)
     require_nonempty_string("current_model", o.current_model, optional=True)
     require_nonempty_string("subs_profile", o.subs_profile, optional=True)
-    has_custom_subs = os.environ.get(PANEL_SUBS_ENV) is not None
-    resolved_subs_profile = (
-        "custom"
-        if has_custom_subs and o.preset in ("subs", "mixed")
-        else (
-            resolve_subs_profile(o.subs_profile)
-            if o.subs_profile is not None or o.preset in ("subs", "mixed")
-            else SUBS_PROFILE_DEFAULT
-        )
-    )
+    resolved_subs_profile = invocation_subs_profile(o.preset, o.subs_profile)
     require_positive_int("panel_timeout", o.panel_timeout)
     require_positive_int("judge_timeout", o.judge_timeout)
     require_positive_int("min_workers", o.min_workers)

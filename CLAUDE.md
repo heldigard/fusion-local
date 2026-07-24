@@ -36,8 +36,12 @@ src/fusion/
 ├── capabilities.py machine-readable capability manifest (doctor/router consumer)
 └── __init__.py     public API (fuse, run_panel, run_judge, FuseOptions, main, ...)
 tests/
-├── test_fusion.py     panel + judge + fuse + CLI (offline, mocked)
-└── test_delegate.py   legacy payload/key/schema
+├── _fusion_harness.py + conftest.py  shared check() harness; real cheap-llm resolution
+├── test_fusion.py                standalone aggregator (legacy runner contract)
+├── test_fusion_panel*.py         lanes/presets + current-model detection (offline, mocked)
+├── test_fusion_judge.py / test_fusion_fuse.py / test_fusion_cli.py  per-domain slices
+├── test_fusion_cworker.py        lane-1 router protocol contracts
+└── test_delegate.py              legacy payload/key/schema
 ```
 
 Each module is one cohesive feature. Module/function names don't collide (`run_panel`,
@@ -163,7 +167,7 @@ fusion --version
 
 ## Commands
 
-- Test (offline): `python3 tests/test_fusion.py && python3 tests/test_delegate.py`
+- Test (offline): `pytest` (or the standalone legacy runner `python3 tests/test_fusion.py && python3 tests/test_delegate.py`)
 - Lint: `ruff check src/fusion/ tests/`
 - Install editable: `pip install -e . --user --break-system-packages`
 

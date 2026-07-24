@@ -170,6 +170,23 @@ def resolve_subs_profile(profile: str | None = None) -> str:
     return selected
 
 
+def invocation_subs_profile(preset: str, subs_profile: str | None) -> str:
+    """Resolve the subs-profile label for one invocation (shared by fuse/run_panel).
+
+    An explicit ``FUSION_PANEL_SUBS`` worker list wins over named profiles for
+    the subscription presets (``subs``/``mixed`` → ``"custom"``); other presets
+    only validate an explicit profile and otherwise keep the package default.
+    """
+    has_custom_subs = os.environ.get(PANEL_SUBS_ENV) is not None
+    if preset in ("subs", "mixed"):
+        if has_custom_subs:
+            return "custom"
+        return resolve_subs_profile(subs_profile)
+    if subs_profile is not None:
+        return resolve_subs_profile(subs_profile)
+    return SUBS_PROFILE_DEFAULT
+
+
 def _subs_workers(profile: str | None = None) -> list[str]:
     """Resolve lane-1 modes; an explicit worker list overrides named profiles."""
     env = os.environ.get(PANEL_SUBS_ENV)
@@ -469,7 +486,10 @@ def _http_runner(spec: Spec, task: str, timeout: int) -> dict[str, Any]:
 def run_panel(
     task: str,
     preset: str = "subs",
-    timeout: int = 60,
+    # Reasoning-tier seats legitimately run 60-120s; the pre-v1.4.0 60s default
+    # starved them and dropped quorum (see FAST_SEAT_TIMEOUT notes above and
+    # FuseOptions.panel_timeout in cli.py, which shares this default).
+    timeout: int = 120,
     min_workers: int = 2,
     current_model: str | None = None,
     subs_profile: str | None = None,
@@ -495,16 +515,7 @@ def run_panel(
     require_nonempty_string("subs_profile", subs_profile, optional=True)
     if not isinstance(allow_payg_fallback, bool):
         raise ValueError("allow_payg_fallback must be a boolean")
-    has_custom_subs = os.environ.get(PANEL_SUBS_ENV) is not None
-    resolved_subs_profile = (
-        "custom"
-        if has_custom_subs and preset in ("subs", "mixed")
-        else (
-            resolve_subs_profile(subs_profile)
-            if subs_profile is not None or preset in ("subs", "mixed")
-            else SUBS_PROFILE_DEFAULT
-        )
-    )
+    resolved_subs_profile = invocation_subs_profile(preset, subs_profile)
     task = _scrub(task)
     current_model = detect_current_model(current_model)
 

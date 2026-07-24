@@ -4,6 +4,24 @@ All notable changes to fusion-local are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- `run_panel` default `timeout` aligned to 120s (was 60). The v1.4.0 tier-aware
+  timeout work raised the CLI/`FuseOptions` default but left the public API
+  default at the value that starved reasoning seats; direct `run_panel`
+  callers now get the same budget as the CLI.
+- Subs-profile resolution (`custom` override, explicit profile, package
+  default) is now shared by `fuse()` and `run_panel` through
+  `panel.invocation_subs_profile` instead of being duplicated in both.
+
+### Fixed
+- README model-routing roster synced with the catalog: `reasoning`/`fast`
+  profiles list Gemini 3.6 Flash (`agy36-flash`, renamed in 1.4.x docs drift)
+  and `specialists` includes the Qwen Coding Plan (`qwenc`) seat.
+- README/CLAUDE.md test layout and commands reflect the per-domain test
+  slices; `pytest` documented as the primary offline gate.
+
 ## [1.5.0] - 2026-07-22
 
 ### Added

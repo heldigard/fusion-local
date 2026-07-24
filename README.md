@@ -46,8 +46,16 @@ src/fusion/
 ├── capabilities.py  machine-readable capability manifest (doctor/router consumer)
 └── __init__.py      public API
 tests/
-├── test_fusion.py     panel + judge + fuse + CLI contracts (offline, mocked)
-└── test_delegate.py   hosted payload/transport/stream/exit contracts (offline, mocked)
+├── _fusion_harness.py            shared deterministic check() harness
+├── conftest.py                   resolves the real cheap-llm checkout
+├── test_fusion.py                standalone aggregator (legacy runner contract)
+├── test_fusion_panel.py          lane orchestration + presets (offline, mocked)
+├── test_fusion_panel_detection.py current-model detection/exclusion
+├── test_fusion_judge.py          judge schema/degradation contracts
+├── test_fusion_fuse.py           fuse() envelope/quorum/cost contracts
+├── test_fusion_cli.py            CLI flags/exit codes/output modes
+├── test_fusion_cworker.py        lane-1 router protocol contracts
+└── test_delegate.py              hosted payload/transport/exit contracts (offline, mocked)
 ```
 
 Each module is one cohesive feature with bounded public signatures and shallow nesting. The judge reuses
@@ -182,7 +190,7 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 
 ## Commands
 
-- Test (offline): `python3 tests/test_fusion.py && python3 tests/test_delegate.py`
+- Test (offline): `pytest` (or the standalone legacy runner `python3 tests/test_fusion.py && python3 tests/test_delegate.py`)
 - Lint: `ruff check src/fusion/ tests/`
 - Install editable: `pip install -e . --user --break-system-packages` (exposes `fusion-local` and `fusion`)
 
@@ -191,9 +199,9 @@ Hosted failures keep stdout empty and diagnostics bounded on stderr.
 - **Panel lane 1 ($0 subs)** uses explicit task profiles:
   - `balanced`: Claude Sonnet 5, Kimi K3, GLM 5.2; three live-verified families.
   - `coding`: GPT-5.6 Terra, Claude Sonnet 5, Kimi K3, Grok Build.
-  - `reasoning`: Claude Opus 4.8, GPT-5.6 Sol, Gemini 3.5 Flash, Kimi K3, GLM 5.2.
-  - `fast`: GPT-5.6 Luna, Gemini 3.5 Flash, GLM 5.2.
-  - `specialists`: Kimi K3, GLM 5.2, MiMo V2.5 Pro, Grok Build.
+  - `reasoning`: Claude Opus 4.8, GPT-5.6 Sol, Gemini 3.6 Flash, Kimi K3, GLM 5.2.
+  - `fast`: GPT-5.6 Luna, Gemini 3.6 Flash, GLM 5.2.
+  - `specialists`: Kimi K3, GLM 5.2, MiMo V2.5 Pro, Grok Build, Qwen Coding Plan (qwenc).
   MiniMax M2.7 is excluded because M3 supersedes it; its subscription seat
   remains manual via `FUSION_PANEL_SUBS=mini`. MiMo stays opt-in, and Grok Build
   is treated as a coding specialist rather than as Grok 4.5.

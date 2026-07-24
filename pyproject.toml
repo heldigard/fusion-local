@@ -24,6 +24,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/heldigard/fusion-local"
+Repository = "https://github.com/heldigard/fusion-local"
+Changelog = "https://github.com/heldigard/fusion-local/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 test = ["pytest>=8", "ruff>=0.6"]
 
